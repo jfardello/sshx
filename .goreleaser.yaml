@@ -1,0 +1,49 @@
+version: 2
+
+project_name: sshx
+
+# For a self-hosted Gitea instance, uncomment and complete this section:
+#
+# gitea_urls:
+#   api: https://GITEA_HOST/api/v1
+#   download: https://GITEA_HOST
+
+builds:
+  - id: sshx
+    main: .
+    binary: sshx
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: linux
+        goarch: arm64
+      - goos: darwin
+        goarch: amd64
+
+archives:
+  - id: sshx
+    builds:
+      - sshx
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
