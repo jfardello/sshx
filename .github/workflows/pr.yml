@@ -1,0 +1,105 @@
+name: PR
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-coverage:
+    name: Test and coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the target branch baseline
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: baseline
+          persist-credentials: false
+
+      - name: Check out the proposed merge
+        uses: actions/checkout@v7
+        with:
+          path: candidate
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: candidate/go.mod
+          cache-dependency-path: candidate/go.sum
+
+      - name: Measure target branch coverage
+        working-directory: baseline
+        run: >-
+          go test
+          -covermode=atomic
+          -coverprofile="${RUNNER_TEMP}/baseline.coverage"
+          ./...
+
+      - name: Measure proposed coverage
+        working-directory: candidate
+        run: >-
+          go test
+          -covermode=atomic
+          -coverprofile="${RUNNER_TEMP}/candidate.coverage"
+          ./...
+
+      - name: Reject coverage regressions
+        shell: bash
+        run: |
+          coverage_percent() {
+            awk '
+              NR > 1 {
+                total += $2
+                if ($3 > 0) {
+                  covered += $2
+                }
+              }
+              END {
+                if (total == 0) {
+                  exit 1
+                }
+                printf "%.10f", 100 * covered / total
+              }
+            ' "$1"
+          }
+
+          baseline="$(coverage_percent "${RUNNER_TEMP}/baseline.coverage")"
+          candidate="$(coverage_percent "${RUNNER_TEMP}/candidate.coverage")"
+
+          {
+            echo "## Coverage comparison"
+            echo
+            echo "| Revision | Statement coverage |"
+            echo "| --- | ---: |"
+            echo "| PR target (${GITHUB_BASE_REF}) | ${baseline}% |"
+            echo "| Proposed merge | ${candidate}% |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          echo "Target branch coverage: ${baseline}%"
+          echo "Proposed coverage:      ${candidate}%"
+
+          if ! awk -v baseline="${baseline}" -v candidate="${candidate}" \
+            'BEGIN { exit !(candidate >= baseline) }'; then
+            echo "::error title=Coverage decreased::Coverage decreased from ${baseline}% to ${candidate}%"
+            exit 1
+          fi
+
+      - name: Run race tests
+        working-directory: candidate
+        run: go test -race ./...
+
+      - name: Run go vet
+        working-directory: candidate
+        run: go vet ./...
+
+      - name: Build
+        working-directory: candidate
+        run: go build -trimpath -o "${RUNNER_TEMP}/sshx" .
