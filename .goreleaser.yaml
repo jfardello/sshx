@@ -41,6 +41,11 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# Build local test artifacts, including committed or uncommitted changes, with:
+# goreleaser release --snapshot --clean --skip=publish
+snapshot:
+  version_template: "{{ incpatch .Version }}~dev.g{{ .ShortCommit }}{{ if .IsGitDirty }}.dirty{{ end }}"
+
 changelog:
   sort: asc
   filters:

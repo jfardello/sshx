@@ -20,6 +20,7 @@ type credentialRef struct {
 	Label      string
 	Target     string
 	Attributes map[string]string
+	Locked     bool
 }
 
 type credentialQuery struct {
@@ -30,6 +31,7 @@ type credentialQuery struct {
 type credentialStore interface {
 	Search(query credentialQuery) ([]credentialRef, error)
 	Secret(credential credentialRef) ([]byte, error)
+	Close() error
 }
 
 type credentialStoreProvider func() (credentialStore, error)

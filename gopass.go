@@ -122,6 +122,10 @@ func (s *gopassStore) Secret(credential credentialRef) ([]byte, error) {
 	return password, nil
 }
 
+func (s *gopassStore) Close() error {
+	return nil
+}
+
 func (s *gopassStore) run(args ...string) ([]byte, error) {
 	stdout, stderr, err := s.execute(args...)
 	s.writeStderr(stderr)

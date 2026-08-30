@@ -343,6 +343,28 @@ func TestExplicitSecretServiceDoesNotFallBackToGopass(t *testing.T) {
 	}
 }
 
+func TestSSHClosesCredentialStoreAndReturnsCleanupError(t *testing.T) {
+	cleanupErr := errors.New("close failed")
+	store := &recordingStore{
+		entries:  gopassCredentialRefs("servers/user@example.com"),
+		closeErr: cleanupErr,
+	}
+	err := executeSSH(
+		[]string{"user@example.com"},
+		dependencies{
+			gopassStore: store,
+			runProgram:  (&recordingRunner{}).run,
+			stdout:      &bytes.Buffer{},
+		},
+	)
+	if !errors.Is(err, cleanupErr) {
+		t.Fatalf("executeSSH() error = %v, want cleanup error", err)
+	}
+	if store.closeCalls != 1 {
+		t.Fatalf("Close() calls = %d, want 1", store.closeCalls)
+	}
+}
+
 func TestSCPCommandExpandsRemotePlaceholder(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -475,6 +497,8 @@ type recordingStore struct {
 	searchQuery   string
 	searchCalls   int
 	secretCalls   int
+	closeCalls    int
+	closeErr      error
 	passwordEntry string
 }
 
@@ -489,6 +513,11 @@ func (s *recordingStore) Secret(credential credentialRef) ([]byte, error) {
 	s.secretCalls++
 	s.passwordEntry = credential.ID
 	return []byte("secret"), nil
+}
+
+func (s *recordingStore) Close() error {
+	s.closeCalls++
+	return s.closeErr
 }
 
 func gopassCredentialRefs(entries ...string) []credentialRef {

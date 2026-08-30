@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -127,7 +128,7 @@ func addPassthroughFlag(cmd *cobra.Command, program string) {
 	cmd.Flags().Bool("verbose", false, "log the selected gopass entry path")
 }
 
-func executeSSH(args []string, deps dependencies) error {
+func executeSSH(args []string, deps dependencies) (returnErr error) {
 	opts, err := parseCommandOptions(args)
 	if err != nil {
 		return fmt.Errorf("usage: sshx [ssh] <userhost|gopass/path> [--credential-backend <backend>] [--gopass-prefix <path>] [--verbose] [-x '<ssh opts>'] [remote_command]: %w", err)
@@ -137,6 +138,11 @@ func executeSSH(args []string, deps dependencies) error {
 	if err != nil {
 		return fmt.Errorf("could not select credential backend: %w", err)
 	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("close credential store: %w", err))
+		}
+	}()
 
 	credential, selected, err := resolveCredential(opts, store, deps)
 	if err != nil || !selected {
@@ -156,7 +162,7 @@ func executeSSH(args []string, deps dependencies) error {
 	return deps.runProgram("ssh", sshArgs, password)
 }
 
-func executeSCP(args []string, deps dependencies) error {
+func executeSCP(args []string, deps dependencies) (returnErr error) {
 	opts, err := parseCommandOptions(args)
 	if err != nil {
 		return fmt.Errorf("usage: sshx scp <userhost|gopass/path> [--credential-backend <backend>] [--gopass-prefix <path>] [--verbose] [-x '<scp opts>'] <source> <destination>: %w", err)
@@ -169,6 +175,11 @@ func executeSCP(args []string, deps dependencies) error {
 	if err != nil {
 		return fmt.Errorf("could not select credential backend: %w", err)
 	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("close credential store: %w", err))
+		}
+	}()
 
 	credential, selected, err := resolveCredential(opts, store, deps)
 	if err != nil || !selected {
