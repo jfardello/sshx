@@ -228,16 +228,28 @@ func secretServiceDBusErrorName(err error) (string, bool) {
 }
 
 func (s *secretServiceStore) Search(query credentialQuery) ([]credentialRef, error) {
-	collections, err := s.objectPathsProperty(
+	collectionPaths, err := s.objectPathsProperty(
 		secretServicePath,
 		secretServiceInterface+".Collections",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list Secret Service collections: %w", err)
 	}
+	aliasPath := secretServiceNoPromptPath
+	if query.Collection != "" {
+		aliasPath, err = s.readCollectionAlias(query.Collection)
+		if err != nil {
+			return nil, err
+		}
+	}
 
-	credentials := make([]credentialRef, 0)
-	for _, collectionPath := range collections {
+	type collectionRef struct {
+		path  dbus.ObjectPath
+		label string
+	}
+	collections := make([]collectionRef, 0, len(collectionPaths))
+	selectedPaths := make(map[dbus.ObjectPath]struct{})
+	for _, collectionPath := range collectionPaths {
 		if err := requireSecretServiceObjectPath(collectionPath, "collection"); err != nil {
 			return nil, err
 		}
@@ -250,33 +262,49 @@ func (s *secretServiceStore) Search(query credentialQuery) ([]credentialRef, err
 			return nil, fmt.Errorf("read Secret Service collection label: %w", err)
 		}
 		if query.Collection != "" && query.Collection != collectionLabel &&
-			query.Collection != path.Base(string(collectionPath)) {
+			query.Collection != path.Base(string(collectionPath)) &&
+			collectionPath != aliasPath {
 			continue
 		}
+		if _, exists := selectedPaths[collectionPath]; exists {
+			continue
+		}
+		selectedPaths[collectionPath] = struct{}{}
+		collections = append(collections, collectionRef{path: collectionPath, label: collectionLabel})
+	}
+	if query.Collection != "" && len(collections) > 1 {
+		return nil, fmt.Errorf(
+			"Secret Service collection selector %q is ambiguous (%d collections matched)",
+			query.Collection,
+			len(collections),
+		)
+	}
 
+	credentials := make([]credentialRef, 0)
+	for _, collection := range collections {
 		locked, err := s.boolProperty(
-			collectionPath,
+			collection.path,
 			secretServiceCollectionInterface+".Locked",
 		)
 		if err != nil {
 			return nil, fmt.Errorf("read Secret Service collection lock state: %w", err)
 		}
 		if locked {
-			if err := s.unlockObject(collectionPath, secretServiceCollectionInterface); err != nil {
-				return nil, fmt.Errorf("unlock Secret Service collection %q: %w", collectionLabel, err)
+			if err := s.unlockObject(collection.path, secretServiceCollectionInterface); err != nil {
+				return nil, fmt.Errorf("unlock Secret Service collection %q: %w", collection.label, err)
 			}
 		}
 
 		items, err := s.objectPathsProperty(
-			collectionPath,
+			collection.path,
 			secretServiceCollectionInterface+".Items",
 		)
 		if err != nil {
-			return nil, fmt.Errorf("list Secret Service items in collection %q: %w", collectionLabel, err)
+			return nil, fmt.Errorf("list Secret Service items in collection %q: %w", collection.label, err)
 		}
 
 		for _, itemPath := range items {
-			credential, err := s.itemMetadata(collectionLabel, itemPath)
+			credential, err := s.itemMetadata(collection.label, itemPath)
 			if err != nil {
 				return nil, err
 			}
@@ -285,6 +313,29 @@ func (s *secretServiceStore) Search(query credentialQuery) ([]credentialRef, err
 	}
 
 	return credentials, nil
+}
+
+func (s *secretServiceStore) readCollectionAlias(alias string) (dbus.ObjectPath, error) {
+	call := s.transport.Call(
+		secretServicePath,
+		secretServiceInterface+".ReadAlias",
+		alias,
+	)
+	if call == nil {
+		return "", errors.New("Secret Service returned a nil ReadAlias call")
+	}
+
+	var collectionPath dbus.ObjectPath
+	if err := call.Store(&collectionPath); err != nil {
+		return "", fmt.Errorf("read Secret Service collection alias %q: %w", alias, err)
+	}
+	if collectionPath == secretServiceNoPromptPath {
+		return collectionPath, nil
+	}
+	if err := requireSecretServiceObjectPath(collectionPath, "collection alias"); err != nil {
+		return "", err
+	}
+	return collectionPath, nil
 }
 
 func (s *secretServiceStore) itemMetadata(

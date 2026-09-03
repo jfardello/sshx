@@ -12,6 +12,7 @@ func TestSelectCredentialStoreUsesExplicitGopass(t *testing.T) {
 
 	store, err := selectCredentialStore(
 		credentialBackendGopass,
+		"linux",
 		gopass,
 		func() (credentialStore, error) {
 			secretServiceCalls++
@@ -21,7 +22,7 @@ func TestSelectCredentialStoreUsesExplicitGopass(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if store != gopass {
+	if store.store != gopass || store.backend != credentialBackendGopass {
 		t.Fatal("explicit gopass did not select the gopass store")
 	}
 	if secretServiceCalls != 0 {
@@ -35,6 +36,7 @@ func TestSelectCredentialStoreUsesAvailableSecretService(t *testing.T) {
 
 	store, err := selectCredentialStore(
 		credentialBackendAuto,
+		"linux",
 		gopass,
 		func() (credentialStore, error) {
 			return secretService, nil
@@ -43,8 +45,56 @@ func TestSelectCredentialStoreUsesAvailableSecretService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if store != secretService {
+	if store.store != secretService || store.backend != credentialBackendSecretService {
 		t.Fatal("auto did not select the available Secret Service store")
+	}
+}
+
+func TestSelectCredentialStoreAutoUsesGopassOffLinux(t *testing.T) {
+	gopass := &recordingStore{}
+	providerCalls := 0
+
+	store, err := selectCredentialStore(
+		credentialBackendAuto,
+		"darwin",
+		gopass,
+		func() (credentialStore, error) {
+			providerCalls++
+			return &recordingStore{}, nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.store != gopass || store.backend != credentialBackendGopass {
+		t.Fatalf("selection = %#v, want gopass", store)
+	}
+	if providerCalls != 0 {
+		t.Fatalf("Secret Service provider calls = %d, want 0", providerCalls)
+	}
+}
+
+func TestSelectCredentialStoreExplicitSecretServiceIgnoresAutoPlatformPolicy(t *testing.T) {
+	secretService := &recordingStore{}
+	providerCalls := 0
+
+	store, err := selectCredentialStore(
+		credentialBackendSecretService,
+		"darwin",
+		&recordingStore{},
+		func() (credentialStore, error) {
+			providerCalls++
+			return secretService, nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.store != secretService || store.backend != credentialBackendSecretService {
+		t.Fatalf("selection = %#v, want Secret Service", store)
+	}
+	if providerCalls != 1 {
+		t.Fatalf("Secret Service provider calls = %d, want 1", providerCalls)
 	}
 }
 
@@ -53,6 +103,7 @@ func TestSelectCredentialStoreAutoFallsBackOnlyWhenUnavailable(t *testing.T) {
 
 	store, err := selectCredentialStore(
 		credentialBackendAuto,
+		"linux",
 		gopass,
 		func() (credentialStore, error) {
 			return nil, newCredentialBackendUnavailableError(
@@ -64,13 +115,14 @@ func TestSelectCredentialStoreAutoFallsBackOnlyWhenUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if store != gopass {
+	if store.store != gopass || store.backend != credentialBackendGopass {
 		t.Fatal("auto did not fall back to gopass")
 	}
 
 	providerErr := errors.New("provider denied access")
 	store, err = selectCredentialStore(
 		credentialBackendAuto,
+		"linux",
 		gopass,
 		func() (credentialStore, error) {
 			return nil, providerErr
@@ -79,7 +131,7 @@ func TestSelectCredentialStoreAutoFallsBackOnlyWhenUnavailable(t *testing.T) {
 	if !errors.Is(err, providerErr) {
 		t.Fatalf("error = %v, want provider error", err)
 	}
-	if store != nil {
+	if store.store != nil {
 		t.Fatal("auto selected a store after a non-unavailable provider error")
 	}
 }
@@ -87,16 +139,17 @@ func TestSelectCredentialStoreAutoFallsBackOnlyWhenUnavailable(t *testing.T) {
 func TestSelectCredentialStoreReportsUnavailableSecretService(t *testing.T) {
 	store, err := selectCredentialStore(
 		credentialBackendSecretService,
+		"linux",
 		&recordingStore{},
 		nil,
 	)
-	if store != nil {
+	if store.store != nil {
 		t.Fatal("unexpected Secret Service store")
 	}
 	if !isCredentialBackendUnavailable(err) {
 		t.Fatalf("error = %v, want backend-unavailable error", err)
 	}
-	if !strings.Contains(err.Error(), "support is not implemented yet") {
+	if !strings.Contains(err.Error(), "provider is not configured") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

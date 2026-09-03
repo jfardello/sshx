@@ -36,6 +36,11 @@ type credentialStore interface {
 
 type credentialStoreProvider func() (credentialStore, error)
 
+type selectedCredentialStore struct {
+	backend credentialBackend
+	store   credentialStore
+}
+
 type credentialBackendUnavailableError struct {
 	backend credentialBackend
 	err     error
@@ -76,29 +81,37 @@ func parseCredentialBackend(value string) (credentialBackend, error) {
 
 func selectCredentialStore(
 	backend credentialBackend,
+	goos string,
 	gopass credentialStore,
 	secretService credentialStoreProvider,
-) (credentialStore, error) {
+) (selectedCredentialStore, error) {
 	if backend == "" {
 		backend = credentialBackendAuto
 	}
 
 	switch backend {
 	case credentialBackendGopass:
-		return configuredCredentialStore(credentialBackendGopass, gopass)
+		store, err := configuredCredentialStore(credentialBackendGopass, gopass)
+		return selectedCredentialStore{backend: credentialBackendGopass, store: store}, err
 	case credentialBackendSecretService:
-		return openSecretServiceStore(secretService)
+		store, err := openSecretServiceStore(secretService)
+		return selectedCredentialStore{backend: credentialBackendSecretService, store: store}, err
 	case credentialBackendAuto:
+		if goos != "linux" {
+			store, err := configuredCredentialStore(credentialBackendGopass, gopass)
+			return selectedCredentialStore{backend: credentialBackendGopass, store: store}, err
+		}
 		store, err := openSecretServiceStore(secretService)
 		if err == nil {
-			return store, nil
+			return selectedCredentialStore{backend: credentialBackendSecretService, store: store}, nil
 		}
 		if !isCredentialBackendUnavailable(err) {
-			return nil, err
+			return selectedCredentialStore{}, err
 		}
-		return configuredCredentialStore(credentialBackendGopass, gopass)
+		store, err = configuredCredentialStore(credentialBackendGopass, gopass)
+		return selectedCredentialStore{backend: credentialBackendGopass, store: store}, err
 	default:
-		return nil, fmt.Errorf("unsupported credential backend %q", backend)
+		return selectedCredentialStore{}, fmt.Errorf("unsupported credential backend %q", backend)
 	}
 }
 
@@ -113,7 +126,7 @@ func openSecretServiceStore(provider credentialStoreProvider) (credentialStore, 
 	if provider == nil {
 		return nil, newCredentialBackendUnavailableError(
 			credentialBackendSecretService,
-			errors.New("support is not implemented yet"),
+			errors.New("provider is not configured"),
 		)
 	}
 

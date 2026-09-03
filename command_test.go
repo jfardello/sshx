@@ -145,7 +145,11 @@ func TestSelectCredential(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			credential, selected := selectCredential(test.target, test.entries)
+			credentials, err := matchCredentials(test.target, test.entries)
+			if err != nil {
+				t.Fatal(err)
+			}
+			credential, selected := selectCredential(credentials)
 			if credential.ID != test.entry || credential.Target != test.host || selected != test.selected {
 				t.Fatalf("got (%q, %q, %v), want (%q, %q, %v)",
 					credential.ID, credential.Target, selected, test.entry, test.host, test.selected)
@@ -294,7 +298,7 @@ func TestCredentialLookupReportsNoMatches(t *testing.T) {
 	store := &recordingStore{}
 	_, _, err := resolveCredential(
 		commandOptions{target: "missing", gopassPrefix: "production"},
-		store,
+		selectedCredentialStore{backend: credentialBackendGopass, store: store},
 		dependencies{gopassStore: store, stdout: &bytes.Buffer{}},
 	)
 	if err == nil || !strings.Contains(err.Error(), `no gopass entry matching "missing" under gopass path "production"`) {
@@ -493,25 +497,36 @@ func (r *chunkReader) Read(p []byte) (int, error) {
 
 type recordingStore struct {
 	entries       []credentialRef
+	searchErr     error
 	searchPrefix  string
 	searchQuery   string
 	searchCalls   int
 	secretCalls   int
+	secretErr     error
+	secret        []byte
 	closeCalls    int
 	closeErr      error
 	passwordEntry string
+	credential    credentialRef
 }
 
 func (s *recordingStore) Search(query credentialQuery) ([]credentialRef, error) {
 	s.searchCalls++
 	s.searchPrefix = query.Collection
 	s.searchQuery = query.Text
-	return s.entries, nil
+	return s.entries, s.searchErr
 }
 
 func (s *recordingStore) Secret(credential credentialRef) ([]byte, error) {
 	s.secretCalls++
 	s.passwordEntry = credential.ID
+	s.credential = credential
+	if s.secretErr != nil {
+		return nil, s.secretErr
+	}
+	if s.secret != nil {
+		return append([]byte(nil), s.secret...), nil
+	}
 	return []byte("secret"), nil
 }
 

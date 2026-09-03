@@ -140,6 +140,7 @@ func TestSecretServiceSearchReturnsMetadataWithoutReadingSecrets(t *testing.T) {
 	collectionPath := dbus.ObjectPath("/org/freedesktop/secrets/collection/login")
 	itemPath := dbus.ObjectPath("/org/freedesktop/secrets/collection/login/1")
 	transport.setProperty(secretServicePath, secretServiceInterface+".Collections", []dbus.ObjectPath{collectionPath})
+	transport.addCall(secretServicePath, secretServiceInterface+".ReadAlias", successfulSecretServiceCall(secretServiceNoPromptPath))
 	transport.setProperty(collectionPath, secretServiceCollectionInterface+".Label", "Login")
 	transport.setProperty(collectionPath, secretServiceCollectionInterface+".Locked", false)
 	transport.setProperty(collectionPath, secretServiceCollectionInterface+".Items", []dbus.ObjectPath{itemPath})
@@ -166,8 +167,8 @@ func TestSecretServiceSearchReturnsMetadataWithoutReadingSecrets(t *testing.T) {
 	if !reflect.DeepEqual(credentials, want) {
 		t.Fatalf("Search() = %#v, want %#v", credentials, want)
 	}
-	if len(transport.callLog) != 0 {
-		t.Fatalf("Search() made method calls (and could read secrets): %#v", transport.callLog)
+	if len(transport.callLog) != 1 || transport.callLog[0].method != secretServiceInterface+".ReadAlias" {
+		t.Fatalf("Search() calls = %#v, want metadata-only ReadAlias", transport.callLog)
 	}
 
 	credentials[0].Attributes["application"] = "changed"
@@ -180,6 +181,7 @@ func TestSecretServiceSearchScopesCollectionByPathName(t *testing.T) {
 	transport := newFakeSecretServiceTransport()
 	collectionPath := dbus.ObjectPath("/org/freedesktop/secrets/collection/login")
 	transport.setProperty(secretServicePath, secretServiceInterface+".Collections", []dbus.ObjectPath{collectionPath})
+	transport.addCall(secretServicePath, secretServiceInterface+".ReadAlias", successfulSecretServiceCall(secretServiceNoPromptPath))
 	transport.setProperty(collectionPath, secretServiceCollectionInterface+".Label", "Default Keyring")
 	transport.setProperty(collectionPath, secretServiceCollectionInterface+".Locked", false)
 	transport.setProperty(collectionPath, secretServiceCollectionInterface+".Items", []dbus.ObjectPath{})
@@ -191,6 +193,53 @@ func TestSecretServiceSearchScopesCollectionByPathName(t *testing.T) {
 	}
 	if len(credentials) != 0 {
 		t.Fatalf("Search() = %#v, want no credentials", credentials)
+	}
+}
+
+func TestSecretServiceSearchScopesCollectionByAlias(t *testing.T) {
+	transport := newFakeSecretServiceTransport()
+	collectionPath := dbus.ObjectPath("/org/freedesktop/secrets/collection/generated_id")
+	transport.setProperty(secretServicePath, secretServiceInterface+".Collections", []dbus.ObjectPath{collectionPath})
+	transport.addCall(secretServicePath, secretServiceInterface+".ReadAlias", successfulSecretServiceCall(collectionPath))
+	transport.setProperty(collectionPath, secretServiceCollectionInterface+".Label", "Default Keyring")
+	transport.setProperty(collectionPath, secretServiceCollectionInterface+".Locked", false)
+	transport.setProperty(collectionPath, secretServiceCollectionInterface+".Items", []dbus.ObjectPath{})
+
+	store := &secretServiceStore{transport: transport}
+	credentials, err := store.Search(credentialQuery{Collection: "default"})
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(credentials) != 0 {
+		t.Fatalf("Search() = %#v, want no credentials", credentials)
+	}
+}
+
+func TestSecretServiceSearchRejectsDuplicateCollectionSelector(t *testing.T) {
+	transport := newFakeSecretServiceTransport()
+	firstPath := dbus.ObjectPath("/org/freedesktop/secrets/collection/first")
+	secondPath := dbus.ObjectPath("/org/freedesktop/secrets/collection/second")
+	transport.setProperty(
+		secretServicePath,
+		secretServiceInterface+".Collections",
+		[]dbus.ObjectPath{firstPath, secondPath},
+	)
+	transport.addCall(secretServicePath, secretServiceInterface+".ReadAlias", successfulSecretServiceCall(secretServiceNoPromptPath))
+	transport.setProperty(firstPath, secretServiceCollectionInterface+".Label", "Work")
+	transport.setProperty(secondPath, secretServiceCollectionInterface+".Label", "Work")
+
+	store := &secretServiceStore{transport: transport}
+	_, err := store.Search(credentialQuery{Collection: "Work"})
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("Search() error = %v, want ambiguous collection error", err)
+	}
+	if len(transport.callLog) != 1 || transport.callLog[0].method != secretServiceInterface+".ReadAlias" {
+		t.Fatalf("Search() calls = %#v, want only ReadAlias", transport.callLog)
+	}
+	for _, property := range transport.propertyLog {
+		if strings.HasSuffix(property.property, ".Locked") || strings.HasSuffix(property.property, ".Items") {
+			t.Fatalf("Search() accessed %q before rejecting duplicate collections", property.property)
+		}
 	}
 }
 
