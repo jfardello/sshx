@@ -3,25 +3,51 @@ package main
 import (
 	"fmt"
 	"net/url"
+	"path"
 	"strings"
 	"unicode"
 )
 
-func matchCredentials(query string, credentials []credentialRef) ([]credentialRef, error) {
-	type candidate struct {
-		credential credentialRef
-		err        error
-	}
+type credentialCandidate struct {
+	credential credentialRef
+	err        error
+}
 
-	candidates := make([]candidate, 0, len(credentials))
+func prepareCredentialCandidates(query string, credentials []credentialRef) []credentialCandidate {
+	candidates := make([]credentialCandidate, 0, len(credentials))
 	for _, credential := range credentials {
 		target, err := credentialTarget(credential, query)
 		if err == nil {
 			credential.Target = target
 		}
-		candidates = append(candidates, candidate{credential: credential, err: err})
+		candidates = append(candidates, credentialCandidate{credential: credential, err: err})
+	}
+	return candidates
+}
+
+func matchCredentials(query string, credentials []credentialRef) ([]credentialRef, error) {
+	return matchCredentialCandidates(query, prepareCredentialCandidates(query, credentials), true)
+}
+
+func credentialsForListing(query string, credentials []credentialRef) []credentialRef {
+	candidates := prepareCredentialCandidates(query, credentials)
+	if query == "" {
+		result := make([]credentialRef, 0, len(candidates))
+		for _, candidate := range candidates {
+			result = append(result, candidate.credential)
+		}
+		return result
 	}
 
+	result, _ := matchCredentialCandidates(query, candidates, false)
+	return result
+}
+
+func matchCredentialCandidates(
+	query string,
+	candidates []credentialCandidate,
+	rejectInvalidTarget bool,
+) ([]credentialRef, error) {
 	stages := []func(credentialRef) bool{
 		func(credential credentialRef) bool {
 			return credential.Attributes != nil && credential.Attributes["sshx.target"] == query
@@ -41,7 +67,7 @@ func matchCredentials(query string, credentials []credentialRef) ([]credentialRe
 			if !matches(candidate.credential) {
 				continue
 			}
-			if candidate.err != nil {
+			if candidate.err != nil && rejectInvalidTarget {
 				return nil, candidate.err
 			}
 			matched = append(matched, candidate.credential)
@@ -58,6 +84,12 @@ func credentialTarget(credential credentialRef, query string) (string, error) {
 		target := credential.Target
 		if target == "" {
 			target = query
+		}
+		if target == "" {
+			target = credential.Label
+		}
+		if target == "" {
+			target = path.Base(credential.ID)
 		}
 		return validateCredentialTarget(target, "gopass credential target")
 	}

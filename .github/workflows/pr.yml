@@ -73,6 +73,8 @@ jobs:
 
           baseline="$(coverage_percent "${RUNNER_TEMP}/baseline.coverage")"
           candidate="$(coverage_percent "${RUNNER_TEMP}/candidate.coverage")"
+          maximum_decrease="2"
+          minimum_coverage="70"
 
           {
             echo "## Coverage comparison"
@@ -81,14 +83,23 @@ jobs:
             echo "| --- | ---: |"
             echo "| PR target (${GITHUB_BASE_REF}) | ${baseline}% |"
             echo "| Proposed merge | ${candidate}% |"
+            echo
+            echo "Allowed decrease: ${maximum_decrease} percentage points"
+            echo "Minimum proposed coverage: ${minimum_coverage}%"
           } >> "${GITHUB_STEP_SUMMARY}"
 
           echo "Target branch coverage: ${baseline}%"
           echo "Proposed coverage:      ${candidate}%"
 
-          if ! awk -v baseline="${baseline}" -v candidate="${candidate}" \
-            'BEGIN { exit !(candidate >= baseline) }'; then
-            echo "::error title=Coverage decreased::Coverage decreased from ${baseline}% to ${candidate}%"
+          if ! awk \
+            -v baseline="${baseline}" \
+            -v candidate="${candidate}" \
+            -v maximum_decrease="${maximum_decrease}" \
+            -v minimum_coverage="${minimum_coverage}" \
+            'BEGIN {
+              exit !(candidate >= minimum_coverage && candidate >= baseline - maximum_decrease)
+            }'; then
+            echo "::error title=Coverage threshold failed::Coverage changed from ${baseline}% to ${candidate}%. The proposed coverage must remain at or above ${minimum_coverage}% and may decrease by at most ${maximum_decrease} percentage points."
             exit 1
           fi
 

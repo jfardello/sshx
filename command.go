@@ -56,7 +56,8 @@ controlling terminal. sshx detects the password prompt, writes the password to
 the PTY master, and then maintains a normal interactive session.`,
 		Example: `  sshx user@example.com --gopass-prefix infrastructure/production
   sshx ssh servers/user@example.com -x "-L 8080:localhost:8080"
-  sshx scp user@example.com -x "-P 2222" file.txt :/tmp/`,
+  sshx scp user@example.com -x "-P 2222" file.txt :/tmp/
+  sshx credentials list production --secret-collection Login`,
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
 		SilenceErrors:      true,
@@ -73,7 +74,7 @@ the PTY master, and then maintains a normal interactive session.`,
 	// Parsing is manual because every option other than -x belongs to the
 	// wrapped OpenSSH program and must pass through unchanged.
 	addPassthroughFlag(cmd, "SSH")
-	cmd.AddCommand(newSSHCommand(deps), newSCPCommand(deps))
+	cmd.AddCommand(newSSHCommand(deps), newSCPCommand(deps), newCredentialsCommand(deps))
 	return cmd
 }
 
@@ -324,7 +325,7 @@ func logSelectedCredential(credential credentialRef, verbose bool, stderr io.Wri
 	if stderr == nil {
 		stderr = io.Discard
 	}
-	_, _ = fmt.Fprintf(stderr, "sshx: using Secret Service credential %q\n", credentialIdentity(credential))
+	_, _ = fmt.Fprintf(stderr, "sshx: using secret-service credential %q\n", credentialIdentity(credential))
 }
 
 func logSelectedEntry(entry string, verbose bool, stderr io.Writer) {

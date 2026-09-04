@@ -44,6 +44,28 @@ func TestGopassSearchReturnsNeutralCredentialMetadata(t *testing.T) {
 	}
 }
 
+func TestGopassSearchUsesParentPathAsDiscoveryCollection(t *testing.T) {
+	store := &gopassStore{
+		executeCommand: func(args ...string) ([]byte, []byte, error) {
+			return []byte("servers/production/admin@example.com\nroot@example.com\n"), nil, nil
+		},
+	}
+
+	credentials, err := store.Search(credentialQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(credentials) != 2 {
+		t.Fatalf("credentials = %#v, want 2 entries", credentials)
+	}
+	if got, want := credentials[0].Collection, "servers/production"; got != want {
+		t.Fatalf("nested collection = %q, want %q", got, want)
+	}
+	if got := credentials[1].Collection; got != "" {
+		t.Fatalf("root collection = %q, want empty", got)
+	}
+}
+
 func TestGopassSecretUsesPasswordOnlyAndClearsCommandOutput(t *testing.T) {
 	rawOutput := []byte("secret\r\n")
 	var gotArgs []string

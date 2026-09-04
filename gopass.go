@@ -50,10 +50,17 @@ func (s *gopassStore) Search(query credentialQuery) ([]credentialRef, error) {
 	paths := filterEntries(entries, query.Collection, query.Text)
 	credentials := make([]credentialRef, 0, len(paths))
 	for _, entry := range paths {
+		collection := query.Collection
+		if collection == "" {
+			collection = path.Dir(entry)
+			if collection == "." {
+				collection = ""
+			}
+		}
 		credentials = append(credentials, credentialRef{
 			Backend:    credentialBackendGopass,
 			ID:         entry,
-			Collection: query.Collection,
+			Collection: collection,
 			Label:      path.Base(entry),
 			Target:     query.Text,
 		})
