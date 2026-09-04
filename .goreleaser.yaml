@@ -37,6 +37,7 @@ archives:
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - README.md
+      - docs/secret-service-smoke-tests.md
 
 checksum:
   name_template: checksums.txt

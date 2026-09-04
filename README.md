@@ -188,6 +188,9 @@ sshx credentials list admin@example.com
 
 Provider provisioning, migration, updates, and deletion are intentionally
 outside sshx. The application is read-only with respect to credential stores.
+Before a release, follow the disposable-credential
+[Secret Service smoke-test matrix](docs/secret-service-smoke-tests.md) for all
+supported providers.
 
 ## SSH usage
 

@@ -47,11 +47,28 @@ jobs:
             exit 1
           fi
 
+      - name: Run isolated Secret Service integration test
+        run: >-
+          dbus-run-session
+          --config-file testdata/dbus-session.conf
+          -- env SSHX_SECRET_SERVICE_INTEGRATION=1
+          go test -race -run '^TestSecretServiceIntegration$' -count=1 ./...
+
       - name: Run race tests
         run: go test -race ./...
 
       - name: Run go vet
         run: go vet ./...
+
+      - name: Cross-build release targets without CGO
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -trimpath -o "${RUNNER_TEMP}/sshx-linux-amd64" .
+          file "${RUNNER_TEMP}/sshx-linux-amd64"
+          file "${RUNNER_TEMP}/sshx-linux-amd64" | grep -q "statically linked"
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
+            go build -trimpath -o "${RUNNER_TEMP}/sshx-darwin-arm64" .
+          file "${RUNNER_TEMP}/sshx-darwin-arm64"
 
       - name: Validate GoReleaser configuration
         uses: goreleaser/goreleaser-action@v7
