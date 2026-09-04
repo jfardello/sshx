@@ -27,6 +27,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           path: candidate
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Go
@@ -73,6 +74,8 @@ jobs:
 
           baseline="$(coverage_percent "${RUNNER_TEMP}/baseline.coverage")"
           candidate="$(coverage_percent "${RUNNER_TEMP}/candidate.coverage")"
+          maximum_decrease="2"
+          minimum_coverage="70"
 
           {
             echo "## Coverage comparison"
@@ -81,16 +84,33 @@ jobs:
             echo "| --- | ---: |"
             echo "| PR target (${GITHUB_BASE_REF}) | ${baseline}% |"
             echo "| Proposed merge | ${candidate}% |"
+            echo
+            echo "Allowed decrease: ${maximum_decrease} percentage points"
+            echo "Minimum proposed coverage: ${minimum_coverage}%"
           } >> "${GITHUB_STEP_SUMMARY}"
 
           echo "Target branch coverage: ${baseline}%"
           echo "Proposed coverage:      ${candidate}%"
 
-          if ! awk -v baseline="${baseline}" -v candidate="${candidate}" \
-            'BEGIN { exit !(candidate >= baseline) }'; then
-            echo "::error title=Coverage decreased::Coverage decreased from ${baseline}% to ${candidate}%"
+          if ! awk \
+            -v baseline="${baseline}" \
+            -v candidate="${candidate}" \
+            -v maximum_decrease="${maximum_decrease}" \
+            -v minimum_coverage="${minimum_coverage}" \
+            'BEGIN {
+              exit !(candidate >= minimum_coverage && candidate >= baseline - maximum_decrease)
+            }'; then
+            echo "::error title=Coverage threshold failed::Coverage changed from ${baseline}% to ${candidate}%. The proposed coverage must remain at or above ${minimum_coverage}% and may decrease by at most ${maximum_decrease} percentage points."
             exit 1
           fi
+
+      - name: Run isolated Secret Service integration test
+        working-directory: candidate
+        run: >-
+          dbus-run-session
+          --config-file testdata/dbus-session.conf
+          -- env SSHX_SECRET_SERVICE_INTEGRATION=1
+          go test -race -run '^TestSecretServiceIntegration$' -count=1 ./...
 
       - name: Run race tests
         working-directory: candidate
@@ -100,6 +120,48 @@ jobs:
         working-directory: candidate
         run: go vet ./...
 
-      - name: Build
+      - name: Cross-build release targets without CGO
         working-directory: candidate
-        run: go build -trimpath -o "${RUNNER_TEMP}/sshx" .
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -trimpath -o "${RUNNER_TEMP}/sshx-linux-amd64" .
+          file "${RUNNER_TEMP}/sshx-linux-amd64"
+          file "${RUNNER_TEMP}/sshx-linux-amd64" | grep -q "statically linked"
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
+            go build -trimpath -o "${RUNNER_TEMP}/sshx-darwin-arm64" .
+          file "${RUNNER_TEMP}/sshx-darwin-arm64"
+
+      - name: Validate GoReleaser configuration
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "v2.18.0"
+          args: check
+          workdir: candidate
+
+      - name: Build non-publishing release snapshot
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "v2.18.0"
+          args: release --snapshot --clean --skip=publish
+          workdir: candidate
+
+      - name: Inspect release snapshot
+        working-directory: candidate
+        shell: bash
+        run: |
+          test "$(find dist -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 2
+          grep -q '"project_name":"sshx"' dist/metadata.json
+          for archive in dist/*.tar.gz; do
+            entries="$(tar -tzf "${archive}")"
+            grep -qx "README.md" <<< "${entries}"
+            grep -qx "docs/secret-service-smoke-tests.md" <<< "${entries}"
+            grep -qx "sshx" <<< "${entries}"
+          done
+          cd dist
+          sha256sum -c checksums.txt
+          if grep -aR -E 'synthetic-integration-password|attribute-secret|decrypted-secret' .; then
+            echo "::error title=Secret fixture in snapshot::A protected test value was found in release artifacts"
+            exit 1
+          fi

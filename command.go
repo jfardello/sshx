@@ -1,33 +1,42 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
 )
 
 type commandOptions struct {
-	target         string
-	gopassPrefix   string
-	verbose        bool
-	programOptions []string
-	extraArgs      []string
+	target               string
+	credentialBackend    credentialBackend
+	credentialBackendSet bool
+	gopassPrefix         string
+	secretCollection     string
+	verbose              bool
+	programOptions       []string
+	extraArgs            []string
 }
 
 type dependencies struct {
-	store      credentialStore
-	runProgram func(program string, args []string, password []byte) error
-	stdout     io.Writer
-	stderr     io.Writer
+	gopassStore        credentialStore
+	secretServiceStore credentialStoreProvider
+	goos               string
+	runProgram         func(program string, args []string, password []byte) error
+	stdout             io.Writer
+	stderr             io.Writer
 }
 
 func newRootCommand() *cobra.Command {
 	return newRootCommandWithDependencies(dependencies{
-		store: newGopassStore(os.Stderr),
+		gopassStore:        newGopassStore(os.Stderr),
+		secretServiceStore: newSecretServiceStore,
+		goos:               runtime.GOOS,
 		runProgram: func(program string, args []string, password []byte) error {
 			return runPTY(program, args, password, os.Stdin, os.Stdout)
 		},
@@ -38,16 +47,17 @@ func newRootCommand() *cobra.Command {
 
 func newRootCommandWithDependencies(deps dependencies) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "sshx <userhost|gopass/path> [--gopass-prefix <path>] [--verbose] [-x '<ssh opts>'] [remote_command]",
-		Short: "Run SSH or SCP with a password stored in gopass",
-		Long: `sshx retrieves a credential from gopass and runs OpenSSH in a new PTY.
+		Use:   "sshx <target|credential> [--credential-backend <backend>] [--secret-collection <collection>] [--gopass-prefix <path>] [--verbose] [-x '<ssh opts>'] [remote_command]",
+		Short: "Run SSH or SCP with a stored password",
+		Long: `sshx retrieves a credential from Secret Service or gopass and runs OpenSSH in a new PTY.
 
 The child process uses the PTY slave as stdin, stdout, stderr, and its
 controlling terminal. sshx detects the password prompt, writes the password to
 the PTY master, and then maintains a normal interactive session.`,
 		Example: `  sshx user@example.com --gopass-prefix infrastructure/production
   sshx ssh servers/user@example.com -x "-L 8080:localhost:8080"
-  sshx scp user@example.com -x "-P 2222" file.txt :/tmp/`,
+  sshx scp user@example.com -x "-P 2222" file.txt :/tmp/
+  sshx credentials list production --secret-collection Login`,
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
 		SilenceErrors:      true,
@@ -64,13 +74,13 @@ the PTY master, and then maintains a normal interactive session.`,
 	// Parsing is manual because every option other than -x belongs to the
 	// wrapped OpenSSH program and must pass through unchanged.
 	addPassthroughFlag(cmd, "SSH")
-	cmd.AddCommand(newSSHCommand(deps), newSCPCommand(deps))
+	cmd.AddCommand(newSSHCommand(deps), newSCPCommand(deps), newCredentialsCommand(deps))
 	return cmd
 }
 
 func newSSHCommand(deps dependencies) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:                "ssh <userhost|gopass/path> [--gopass-prefix <path>] [--verbose] [-x '<ssh opts>'] [remote_command]",
+		Use:                "ssh <target|credential> [--credential-backend <backend>] [--secret-collection <collection>] [--gopass-prefix <path>] [--verbose] [-x '<ssh opts>'] [remote_command]",
 		Short:              "Open an SSH session or run a remote command",
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
@@ -89,9 +99,9 @@ func newSSHCommand(deps dependencies) *cobra.Command {
 
 func newSCPCommand(deps dependencies) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "scp <userhost|gopass/path> [--gopass-prefix <path>] [--verbose] [-x '<scp opts>'] <source> <destination>",
+		Use:   "scp <target|credential> [--credential-backend <backend>] [--secret-collection <collection>] [--gopass-prefix <path>] [--verbose] [-x '<scp opts>'] <source> <destination>",
 		Short: "Copy a file between the local system and a remote host",
-		Long: `Copy a file with OpenSSH scp using a password stored in gopass.
+		Long: `Copy a file with OpenSSH scp using a stored password.
 
 An operand beginning with ":" is expanded using the host resolved from the
 credential. For example, ":/tmp/file" becomes "user@host:/tmp/file".`,
@@ -119,22 +129,39 @@ func isHelpRequest(args []string) bool {
 
 func addPassthroughFlag(cmd *cobra.Command, program string) {
 	cmd.Flags().StringP("options", "x", "", strings.ToLower(program)+" options separated by spaces")
+	cmd.Flags().String("credential-backend", "auto", "credential backend: auto, secret-service, or gopass")
+	cmd.Flags().String("secret-collection", "", "limit Secret Service lookup to this collection label or alias")
 	cmd.Flags().String("gopass-prefix", "", "limit credential lookup to this gopass path")
-	cmd.Flags().Bool("verbose", false, "log the selected gopass entry path")
+	cmd.Flags().Bool("verbose", false, "log the selected credential identity")
 }
 
-func executeSSH(args []string, deps dependencies) error {
+func executeSSH(args []string, deps dependencies) (returnErr error) {
 	opts, err := parseCommandOptions(args)
 	if err != nil {
-		return fmt.Errorf("usage: sshx [ssh] <userhost|gopass/path> [--gopass-prefix <path>] [--verbose] [-x '<ssh opts>'] [remote_command]: %w", err)
+		return fmt.Errorf("usage: sshx [ssh] <target|credential> [--credential-backend <backend>] [--secret-collection <collection>] [--gopass-prefix <path>] [--verbose] [-x '<ssh opts>'] [remote_command]: %w", err)
 	}
 
-	entry, host, selected, err := resolveCredential(opts, deps)
+	selection, err := selectCredentialStore(
+		opts.credentialBackend,
+		dependencyGOOS(deps),
+		deps.gopassStore,
+		deps.secretServiceStore,
+	)
+	if err != nil {
+		return fmt.Errorf("could not select credential backend: %w", err)
+	}
+	defer func() {
+		if err := selection.store.Close(); err != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("close credential store: %w", err))
+		}
+	}()
+
+	credential, selected, err := resolveCredential(opts, selection, deps)
 	if err != nil || !selected {
 		return err
 	}
 
-	password, err := deps.store.Password(entry)
+	password, err := selection.store.Secret(credential)
 	if err != nil {
 		return fmt.Errorf("could not retrieve password: %w", err)
 	}
@@ -142,21 +169,36 @@ func executeSSH(args []string, deps dependencies) error {
 
 	sshArgs := make([]string, 0, len(opts.programOptions)+1+len(opts.extraArgs))
 	sshArgs = append(sshArgs, opts.programOptions...)
-	sshArgs = append(sshArgs, host)
+	sshArgs = append(sshArgs, credential.Target)
 	sshArgs = append(sshArgs, opts.extraArgs...)
 	return deps.runProgram("ssh", sshArgs, password)
 }
 
-func executeSCP(args []string, deps dependencies) error {
+func executeSCP(args []string, deps dependencies) (returnErr error) {
 	opts, err := parseCommandOptions(args)
 	if err != nil {
-		return fmt.Errorf("usage: sshx scp <userhost|gopass/path> [--gopass-prefix <path>] [--verbose] [-x '<scp opts>'] <source> <destination>: %w", err)
+		return fmt.Errorf("usage: sshx scp <target|credential> [--credential-backend <backend>] [--secret-collection <collection>] [--gopass-prefix <path>] [--verbose] [-x '<scp opts>'] <source> <destination>: %w", err)
 	}
 	if len(opts.extraArgs) != 2 {
 		return fmt.Errorf("scp requires exactly one source and one destination")
 	}
 
-	entry, host, selected, err := resolveCredential(opts, deps)
+	selection, err := selectCredentialStore(
+		opts.credentialBackend,
+		dependencyGOOS(deps),
+		deps.gopassStore,
+		deps.secretServiceStore,
+	)
+	if err != nil {
+		return fmt.Errorf("could not select credential backend: %w", err)
+	}
+	defer func() {
+		if err := selection.store.Close(); err != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("close credential store: %w", err))
+		}
+	}()
+
+	credential, selected, err := resolveCredential(opts, selection, deps)
 	if err != nil || !selected {
 		return err
 	}
@@ -164,7 +206,7 @@ func executeSCP(args []string, deps dependencies) error {
 	operands := append([]string(nil), opts.extraArgs...)
 	for i := range operands {
 		if strings.HasPrefix(operands[i], ":") {
-			operands[i] = host + operands[i]
+			operands[i] = credential.Target + operands[i]
 		}
 	}
 
@@ -181,7 +223,7 @@ func executeSCP(args []string, deps dependencies) error {
 		return fmt.Errorf("remote-to-remote copies are not supported")
 	}
 
-	password, err := deps.store.Password(entry)
+	password, err := selection.store.Secret(credential)
 	if err != nil {
 		return fmt.Errorf("could not retrieve password: %w", err)
 	}
@@ -193,44 +235,97 @@ func executeSCP(args []string, deps dependencies) error {
 	return deps.runProgram("scp", scpArgs, password)
 }
 
-func resolveCredential(opts commandOptions, deps dependencies) (entry, host string, selected bool, err error) {
-	if strings.Contains(opts.target, "/") {
+func dependencyGOOS(deps dependencies) string {
+	if deps.goos != "" {
+		return deps.goos
+	}
+	return runtime.GOOS
+}
+
+func resolveCredential(
+	opts commandOptions,
+	selection selectedCredentialStore,
+	deps dependencies,
+) (credentialRef, bool, error) {
+	if selection.backend == credentialBackendGopass && strings.Contains(opts.target, "/") {
 		targetPath, err := normalizeGopassEntryPath(opts.target)
 		if err != nil {
-			return "", "", false, err
+			return credentialRef{}, false, err
 		}
-		entry = path.Join(opts.gopassPrefix, targetPath)
-		host = path.Base(opts.target)
-		logSelectedEntry(entry, opts.verbose, deps.stderr)
-		return entry, host, true, nil
+		entry := path.Join(opts.gopassPrefix, targetPath)
+		credential := credentialRef{
+			Backend:    credentialBackendGopass,
+			ID:         entry,
+			Collection: opts.gopassPrefix,
+			Label:      path.Base(entry),
+			Target:     path.Base(opts.target),
+		}
+		logSelectedEntry(credential.ID, opts.verbose, deps.stderr)
+		return credential, true, nil
 	}
 
-	entries, err := deps.store.Search(opts.gopassPrefix, opts.target)
+	collection := opts.gopassPrefix
+	if selection.backend == credentialBackendSecretService {
+		collection = opts.secretCollection
+	}
+	credentials, err := selection.store.Search(credentialQuery{
+		Collection: collection,
+		Text:       opts.target,
+	})
 	if err != nil {
-		return "", "", false, fmt.Errorf("could not retrieve credentials: %w", err)
+		return credentialRef{}, false, fmt.Errorf("could not retrieve credentials: %w", err)
 	}
 
-	entry, host, selected = selectCredential(opts.target, entries)
-	if len(entries) == 0 {
+	credentials, err = matchCredentials(opts.target, credentials)
+	if err != nil {
+		return credentialRef{}, false, err
+	}
+	credential, selected := selectCredential(credentials)
+	if len(credentials) == 0 {
+		if selection.backend == credentialBackendSecretService {
+			location := "Secret Service"
+			if opts.secretCollection != "" {
+				location = fmt.Sprintf("Secret Service collection %q", opts.secretCollection)
+			}
+			return credentialRef{}, false, fmt.Errorf(
+				"no credential matching %q in %s",
+				opts.target,
+				location,
+			)
+		}
 		location := "the gopass tree"
 		if opts.gopassPrefix != "" {
 			location = fmt.Sprintf("gopass path %q", opts.gopassPrefix)
 		}
-		return "", "", false, fmt.Errorf("no gopass entry matching %q under %s", opts.target, location)
+		return credentialRef{}, false, fmt.Errorf("no gopass entry matching %q under %s", opts.target, location)
 	}
 	if !selected {
 		stdout := deps.stdout
 		if stdout == nil {
 			stdout = io.Discard
 		}
-		fmt.Fprintln(stdout, "Please choose one of:")
-		for _, candidate := range entries {
-			fmt.Fprintln(stdout, candidate)
+		_, _ = fmt.Fprintln(stdout, "Please choose one of:")
+		for _, candidate := range credentials {
+			_, _ = fmt.Fprintln(stdout, credentialIdentity(candidate))
 		}
-		return "", "", false, nil
+		return credentialRef{}, false, nil
 	}
-	logSelectedEntry(entry, opts.verbose, deps.stderr)
-	return entry, host, selected, nil
+	logSelectedCredential(credential, opts.verbose, deps.stderr)
+	return credential, selected, nil
+}
+
+func logSelectedCredential(credential credentialRef, verbose bool, stderr io.Writer) {
+	if credential.Backend == credentialBackendGopass {
+		logSelectedEntry(credential.ID, verbose, stderr)
+		return
+	}
+	if !verbose {
+		return
+	}
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	_, _ = fmt.Fprintf(stderr, "sshx: using secret-service credential %q\n", credentialIdentity(credential))
 }
 
 func logSelectedEntry(entry string, verbose bool, stderr io.Writer) {
@@ -240,7 +335,7 @@ func logSelectedEntry(entry string, verbose bool, stderr io.Writer) {
 	if stderr == nil {
 		stderr = io.Discard
 	}
-	fmt.Fprintf(stderr, "sshx: using gopass entry %q\n", entry)
+	_, _ = fmt.Fprintf(stderr, "sshx: using gopass entry %q\n", entry)
 }
 
 func isRemoteOperand(operand string) bool {
@@ -260,7 +355,7 @@ func parseCommandOptions(args []string) (commandOptions, error) {
 		return commandOptions{}, fmt.Errorf("credential or host cannot be empty")
 	}
 
-	result := commandOptions{target: args[0]}
+	result := commandOptions{target: args[0], credentialBackend: credentialBackendAuto}
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
 		case "-x", "--options":
@@ -282,16 +377,58 @@ func parseCommandOptions(args []string) (commandOptions, error) {
 			}
 			result.gopassPrefix = prefix
 			i++
+		case "--secret-collection":
+			if i+1 >= len(args) {
+				return commandOptions{}, fmt.Errorf("--secret-collection requires an argument")
+			}
+			if result.secretCollection != "" {
+				return commandOptions{}, fmt.Errorf("--secret-collection may only be specified once")
+			}
+			if args[i+1] == "" {
+				return commandOptions{}, fmt.Errorf("secret collection cannot be empty")
+			}
+			result.secretCollection = args[i+1]
+			i++
+		case "--credential-backend":
+			if i+1 >= len(args) {
+				return commandOptions{}, fmt.Errorf("--credential-backend requires an argument")
+			}
+			if result.credentialBackendSet {
+				return commandOptions{}, fmt.Errorf("--credential-backend may only be specified once")
+			}
+			backend, err := parseCredentialBackend(args[i+1])
+			if err != nil {
+				return commandOptions{}, err
+			}
+			result.credentialBackend = backend
+			result.credentialBackendSet = true
+			i++
 		case "--verbose":
 			result.verbose = true
 		case "--":
 			result.extraArgs = append(result.extraArgs, args[i:]...)
-			return result, nil
+			return finalizeCommandOptions(result)
 		default:
 			result.extraArgs = append(result.extraArgs, args[i])
 		}
 	}
 
+	return finalizeCommandOptions(result)
+}
+
+func finalizeCommandOptions(result commandOptions) (commandOptions, error) {
+	if result.gopassPrefix != "" && result.credentialBackend == credentialBackendSecretService {
+		return commandOptions{}, fmt.Errorf("--gopass-prefix cannot be used with the secret-service backend")
+	}
+	if result.secretCollection != "" && result.credentialBackend == credentialBackendGopass {
+		return commandOptions{}, fmt.Errorf("--secret-collection cannot be used with the gopass backend")
+	}
+	if result.gopassPrefix != "" && result.credentialBackend == credentialBackendAuto {
+		result.credentialBackend = credentialBackendGopass
+	}
+	if result.secretCollection != "" && result.credentialBackend == credentialBackendGopass {
+		return commandOptions{}, fmt.Errorf("--secret-collection cannot be combined with --gopass-prefix")
+	}
 	return result, nil
 }
 
@@ -320,11 +457,11 @@ func normalizeGopassPath(value, label string) (string, error) {
 	return path.Clean(trimmed), nil
 }
 
-func selectCredential(target string, entries []string) (entry, host string, selected bool) {
-	if len(entries) == 1 {
-		return entries[0], target, true
+func selectCredential(credentials []credentialRef) (credentialRef, bool) {
+	if len(credentials) == 1 {
+		return credentials[0], true
 	}
-	return "", "", false
+	return credentialRef{}, false
 }
 
 func clearBytes(value []byte) {
