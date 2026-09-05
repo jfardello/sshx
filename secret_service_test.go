@@ -273,7 +273,7 @@ func TestSecretServiceSecretRetrievesOnlySelectedUnlockedItem(t *testing.T) {
 	responseValue := []byte("hunter2")
 	transport.setProperty(itemPath, secretServiceItemInterface+".Locked", false)
 	transport.addCall(secretServicePath, secretServiceInterface+".OpenSession", successfulSecretServiceCall(
-		dbus.MakeVariant(""), sessionPath,
+		dbus.MakeVariant([]byte{}), sessionPath,
 	))
 	transport.addCall(itemPath, secretServiceItemInterface+".GetSecret", successfulSecretServiceCall(
 		[]any{sessionPath, []byte{}, responseValue, "text/plain"},
@@ -406,6 +406,28 @@ func TestSecretServiceRejectsMalformedResponses(t *testing.T) {
 		store := &secretServiceStore{transport: transport}
 		if _, err := store.Secret(credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}); err == nil || !strings.Contains(err.Error(), "plain session output") {
 			t.Fatalf("Secret() error = %v, want malformed session error", err)
+		}
+		if got := transport.callLog[len(transport.callLog)-1].method; got != secretServiceSessionInterface+".Close" {
+			t.Fatalf("last call = %q, want session Close", got)
+		}
+	})
+
+	t.Run("non-empty byte-array plain session", func(t *testing.T) {
+		transport := newFakeSecretServiceTransport()
+		itemPath := dbus.ObjectPath("/org/freedesktop/secrets/collection/login/1")
+		sessionPath := dbus.ObjectPath("/org/freedesktop/secrets/session/1")
+		output := []byte("unexpected")
+		transport.setProperty(itemPath, secretServiceItemInterface+".Locked", false)
+		transport.addCall(secretServicePath, secretServiceInterface+".OpenSession", successfulSecretServiceCall(
+			dbus.MakeVariant(output), sessionPath,
+		))
+		transport.addCall(sessionPath, secretServiceSessionInterface+".Close", successfulSecretServiceCall())
+		store := &secretServiceStore{transport: transport}
+		if _, err := store.Secret(credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}); err == nil || !strings.Contains(err.Error(), "plain session output") {
+			t.Fatalf("Secret() error = %v, want malformed session error", err)
+		}
+		if got := string(output); got != strings.Repeat("\x00", len(output)) {
+			t.Fatalf("plain session output was not cleared: %q", got)
 		}
 		if got := transport.callLog[len(transport.callLog)-1].method; got != secretServiceSessionInterface+".Close" {
 			t.Fatalf("last call = %q, want session Close", got)

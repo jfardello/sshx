@@ -270,7 +270,10 @@ func (p *integrationSecretServiceProvider) openSession(
 	p.mutex.Lock()
 	p.opened++
 	p.mutex.Unlock()
-	return dbus.MakeVariant(""), integrationSessionPath, nil
+	// Match gopass-secret-service's current plain-session response. The Secret
+	// Service specification calls for an empty string, but this provider uses
+	// an empty byte array for all session negotiation output.
+	return dbus.MakeVariant([]byte{}), integrationSessionPath, nil
 }
 
 func (p *integrationSecretServiceProvider) prompt(_ string) *dbus.Error {

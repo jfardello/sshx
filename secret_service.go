@@ -469,7 +469,7 @@ func (s *secretServiceStore) openSession() (dbus.ObjectPath, error) {
 	if err := requireSecretServiceObjectPath(sessionPath, "session"); err != nil {
 		return "", err
 	}
-	if value, ok := output.Value().(string); !ok || value != "" {
+	if !isValidPlainSessionOutput(output) {
 		responseErr := errors.New("malformed Secret Service plain session output")
 		if closeErr := s.closeSession(sessionPath); closeErr != nil {
 			responseErr = errors.Join(responseErr, closeErr)
@@ -477,6 +477,22 @@ func (s *secretServiceStore) openSession() (dbus.ObjectPath, error) {
 		return "", responseErr
 	}
 	return sessionPath, nil
+}
+
+func isValidPlainSessionOutput(output dbus.Variant) bool {
+	switch value := output.Value().(type) {
+	case string:
+		return value == ""
+	case []byte:
+		// gopass-secret-service currently returns an empty byte array for a
+		// plain session even though the specification calls for an empty
+		// string. Accept only the empty form to preserve strict validation.
+		valid := len(value) == 0
+		clearBytes(value)
+		return valid
+	default:
+		return false
+	}
 }
 
 func (s *secretServiceStore) closeSession(sessionPath dbus.ObjectPath) error {
