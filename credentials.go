@@ -23,7 +23,7 @@ func newCredentialsCommand(deps dependencies) *cobra.Command {
 }
 
 func newCredentialsListCommand(deps dependencies) *cobra.Command {
-	var backendValue string
+	backendValue := "auto"
 	var collection string
 	var prefix string
 
@@ -38,32 +38,28 @@ Secret values and complete attribute maps are never requested or displayed.`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
-	cmd.Flags().StringVar(&backendValue, "credential-backend", "auto", "credential backend: auto, secret-service, or gopass")
-	cmd.Flags().StringVar(&collection, "secret-collection", "", "limit Secret Service lookup to this collection label or alias")
-	cmd.Flags().StringVar(&prefix, "gopass-prefix", "", "limit credential lookup to this gopass path")
+	cmd.Flags().Var(&singleStringValue{value: &backendValue}, "credential-backend", "credential backend: auto, secret-service, or gopass")
+	cmd.Flags().Var(&singleStringValue{value: &collection}, "secret-collection", "limit Secret Service lookup (empty clears the configured collection)")
+	cmd.Flags().Var(&singleStringValue{value: &prefix}, "gopass-prefix", "limit gopass lookup (empty clears the configured prefix)")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		backend, err := parseCredentialBackend(backendValue)
-		if err != nil {
-			return err
+		var overrides optionOverrides
+		if cmd.Flags().Changed("credential-backend") {
+			overrides.CredentialBackend = &backendValue
 		}
-		if cmd.Flags().Changed("secret-collection") && collection == "" {
-			return fmt.Errorf("secret collection cannot be empty")
+		if cmd.Flags().Changed("secret-collection") {
+			overrides.SecretCollection = &collection
 		}
 		if cmd.Flags().Changed("gopass-prefix") {
-			prefix, err = normalizeGopassPrefix(prefix)
-			if err != nil {
-				return err
-			}
+			overrides.GopassPrefix = &prefix
 		}
-
-		options, err := finalizeCommandOptions(commandOptions{
-			credentialBackend: backend,
-			gopassPrefix:      prefix,
-			secretCollection:  collection,
-		})
+		options, err := configuredCommandOptions(commandOptions{}, overrides, deps)
 		if err != nil {
 			return err
 		}
+		// Listing only consumes credential defaults, not SSH/SCP execution options.
+		options.verbose = false
+		options.programOptions = nil
+
 		query := ""
 		if len(args) == 1 {
 			query = args[0]
@@ -159,4 +155,21 @@ func safeCredentialField(value string) string {
 		return "-"
 	}
 	return value
+}
+
+// singleStringValue preserves presence even for an explicit empty override.
+type singleStringValue struct {
+	value *string
+	set   bool
+}
+
+func (v *singleStringValue) String() string { return *v.value }
+func (v *singleStringValue) Type() string   { return "string" }
+func (v *singleStringValue) Set(value string) error {
+	if v.set {
+		return errors.New("may only be specified once")
+	}
+	*v.value = value
+	v.set = true
+	return nil
 }

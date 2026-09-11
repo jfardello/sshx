@@ -8,8 +8,7 @@ variables.
 
 The `ssh` or `scp` process starts in a new session with a PTY as its controlling
 terminal. `sshx` detects the OpenSSH password prompt, writes the password to the
-PTY, and then maintains a normal interactive session. This follows the model
-used by [`clarkwang/passh`](https://github.com/clarkwang/passh).
+PTY, and then maintains a normal interactive session. 
 
 ## Requirements
 
@@ -35,6 +34,95 @@ go test ./...
 go build -o sshx .
 install -m 0755 sshx "${HOME}/.local/bin/sshx"
 ```
+
+## Configuration file
+
+Set command defaults in `~/.config/sshx/config.yaml`. If `XDG_CONFIG_HOME`
+is an absolute path, sshx reads `$XDG_CONFIG_HOME/sshx/config.yaml` instead.
+An empty or relative `XDG_CONFIG_HOME` uses the home-directory fallback.
+
+Precedence is **built-in defaults < configuration file < explicit CLI options**.
+A missing or empty file preserves the built-in defaults. sshx reads the file
+once per invocation and does not create or modify it.
+
+```yaml
+credential-backend: auto
+secret-collection: Login
+verbose: false
+options: "-o ConnectTimeout=10 -o ServerAliveInterval=30"
+```
+
+For direct gopass, use this configuration instead:
+
+```yaml
+credential-backend: gopass
+gopass-prefix: infrastructure/production
+verbose: true
+```
+
+| YAML key | CLI option | Default |
+| --- | --- | --- |
+| `credential-backend` | `--credential-backend` | `auto` |
+| `secret-collection` | `--secret-collection` | Empty (unscoped) |
+| `gopass-prefix` | `--gopass-prefix` | Empty (unscoped) |
+| `verbose` | `--verbose` | `false` |
+| `options` | `-x`, `--options` | Empty |
+
+All five fields apply to shorthand SSH, explicit `ssh`, and `scp` commands.
+`credentials list` uses the three credential defaults; it ignores valid
+`verbose` and `options` fields. Targets, queries, remote commands and copy
+operands remain CLI arguments.
+
+Override file values using the same CLI options, including explicit false or
+empty values:
+
+```sh
+sshx user@example.com --verbose=false
+sshx user@example.com --secret-collection Work
+sshx user@example.com --gopass-prefix ""
+sshx user@example.com -x ""
+```
+
+The recognized long options also accept `--name=value`. Bare `--verbose`
+means true; use `--verbose=false` to disable it. An explicit empty scope value
+clears a file default, while a missing flag argument is still an error.
+Duplicate backend/scope flags are rejected even when their values are empty.
+
+A CLI `-x` or `--options` **replaces the complete configured options string**.
+Repeated CLI occurrences concatenate in order. Option strings use whitespace
+splitting, as before; YAML quotes do not introduce shell quoting or expansion
+inside the string. Unknown arguments and everything after `--` retain the
+existing pass-through behavior. Native OpenSSH options outside `-x` follow
+OpenSSH's own precedence; use `-x` for deterministic replacement of file defaults.
+
+The shared `options` value must suit both SSH and SCP. Put command-specific
+options such as `ssh -p` or `scp -P` in CLI `-x` values or OpenSSH host
+configuration.
+
+Backend/scope conflicts are checked after merging. Switching a configured
+Secret Service collection to gopass requires clearing the collection explicitly:
+
+```sh
+sshx user@example.com --credential-backend gopass \
+  --secret-collection "" --gopass-prefix infrastructure/production
+```
+
+`auto` with a nonempty gopass prefix still selects gopass. To restore automatic
+backend selection, clear that prefix too. Conflict errors identify whether the
+fields came from the CLI, file, or built-in defaults.
+
+The file must be one YAML mapping, at most 64 KiB. Only the keys above are
+accepted, with string values except for the `true`/`false` boolean `verbose`.
+Unknown/duplicate keys, nulls, aliases, nested values, multiple documents,
+invalid backends and unsafe gopass paths are rejected, even if a CLI option
+would replace the invalid field. File read errors stop the command before
+credential access. Help and shell completion work without loading the file.
+
+Dotfiles symlinks to regular files are supported; dangling links and nonregular
+files are errors. For a manually managed file, directory mode `0700` and file
+mode `0600` are recommended. Store defaults here, not passwords or private keys.
+Configured OpenSSH options have the same authority as options you supply on
+the CLI. sshx does not search project directories for configuration.
 
 ## Backend selection
 

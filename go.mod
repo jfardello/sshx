@@ -6,6 +6,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/spf13/cobra v1.10.1
+	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/term v0.34.0
 )
 

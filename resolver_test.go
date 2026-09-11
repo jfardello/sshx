@@ -57,11 +57,6 @@ func TestParseCommandOptionsRejectsBackendScopeConflicts(t *testing.T) {
 			want: "cannot be combined",
 		},
 		{
-			name: "empty collection",
-			args: []string{"host", "--secret-collection", ""},
-			want: "cannot be empty",
-		},
-		{
 			name: "duplicate collection",
 			args: []string{"host", "--secret-collection", "Login", "--secret-collection", "Other"},
 			want: "may only be specified once",

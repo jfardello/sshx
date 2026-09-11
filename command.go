@@ -27,6 +27,7 @@ type dependencies struct {
 	gopassStore        credentialStore
 	secretServiceStore credentialStoreProvider
 	goos               string
+	loadConfig         func() (optionOverrides, error)
 	runProgram         func(program string, args []string, password []byte) error
 	stdout             io.Writer
 	stderr             io.Writer
@@ -37,6 +38,7 @@ func newRootCommand() *cobra.Command {
 		gopassStore:        newGopassStore(os.Stderr),
 		secretServiceStore: newSecretServiceStore,
 		goos:               runtime.GOOS,
+		loadConfig:         loadUserConfig,
 		runProgram: func(program string, args []string, password []byte) error {
 			return runPTY(program, args, password, os.Stdin, os.Stdout)
 		},
@@ -53,7 +55,10 @@ func newRootCommandWithDependencies(deps dependencies) *cobra.Command {
 
 The child process uses the PTY slave as stdin, stdout, stderr, and its
 controlling terminal. sshx detects the password prompt, writes the password to
-the PTY master, and then maintains a normal interactive session.`,
+the PTY master, and then maintains a normal interactive session.
+
+Defaults are read from ~/.config/sshx/config.yaml (or $XDG_CONFIG_HOME/sshx/config.yaml).
+Explicit command-line options override file defaults.`,
 		Example: `  sshx user@example.com --gopass-prefix infrastructure/production
   sshx ssh servers/user@example.com -x "-L 8080:localhost:8080"
   sshx scp user@example.com -x "-P 2222" file.txt :/tmp/
@@ -71,8 +76,8 @@ the PTY master, and then maintains a normal interactive session.`,
 	}
 
 	// Cobra remains responsible for command dispatch and generated help.
-	// Parsing is manual because every option other than -x belongs to the
-	// wrapped OpenSSH program and must pass through unchanged.
+	// Parsing is manual so options not owned by sshx pass through to
+	// OpenSSH unchanged.
 	addPassthroughFlag(cmd, "SSH")
 	cmd.AddCommand(newSSHCommand(deps), newSCPCommand(deps), newCredentialsCommand(deps))
 	return cmd
@@ -130,13 +135,13 @@ func isHelpRequest(args []string) bool {
 func addPassthroughFlag(cmd *cobra.Command, program string) {
 	cmd.Flags().StringP("options", "x", "", strings.ToLower(program)+" options separated by spaces")
 	cmd.Flags().String("credential-backend", "auto", "credential backend: auto, secret-service, or gopass")
-	cmd.Flags().String("secret-collection", "", "limit Secret Service lookup to this collection label or alias")
-	cmd.Flags().String("gopass-prefix", "", "limit credential lookup to this gopass path")
-	cmd.Flags().Bool("verbose", false, "log the selected credential identity")
+	cmd.Flags().String("secret-collection", "", "limit Secret Service lookup (empty clears the configured collection)")
+	cmd.Flags().String("gopass-prefix", "", "limit gopass lookup (empty clears the configured prefix)")
+	cmd.Flags().Bool("verbose", false, "log the selected credential identity (--verbose=false disables)")
 }
 
 func executeSSH(args []string, deps dependencies) (returnErr error) {
-	opts, err := parseCommandOptions(args)
+	opts, err := parseConfiguredCommandOptions(args, deps)
 	if err != nil {
 		return fmt.Errorf("usage: sshx [ssh] <target|credential> [--credential-backend <backend>] [--secret-collection <collection>] [--gopass-prefix <path>] [--verbose] [-x '<ssh opts>'] [remote_command]: %w", err)
 	}
@@ -175,7 +180,7 @@ func executeSSH(args []string, deps dependencies) (returnErr error) {
 }
 
 func executeSCP(args []string, deps dependencies) (returnErr error) {
-	opts, err := parseCommandOptions(args)
+	opts, err := parseConfiguredCommandOptions(args, deps)
 	if err != nil {
 		return fmt.Errorf("usage: sshx scp <target|credential> [--credential-backend <backend>] [--secret-collection <collection>] [--gopass-prefix <path>] [--verbose] [-x '<scp opts>'] <source> <destination>: %w", err)
 	}
@@ -348,72 +353,85 @@ func isRemoteOperand(operand string) bool {
 }
 
 func parseCommandOptions(args []string) (commandOptions, error) {
+	return parseConfiguredCommandOptions(args, dependencies{})
+}
+
+func parseConfiguredCommandOptions(args []string, deps dependencies) (commandOptions, error) {
+	invocation, overrides, err := parseCommandOverrides(args)
+	if err != nil {
+		return commandOptions{}, err
+	}
+	return configuredCommandOptions(invocation, overrides, deps)
+}
+
+func parseCommandOverrides(args []string) (commandOptions, optionOverrides, error) {
+	var overrides optionOverrides
 	if len(args) == 0 {
-		return commandOptions{}, fmt.Errorf("missing credential or host")
+		return commandOptions{}, overrides, fmt.Errorf("missing credential or host")
 	}
 	if args[0] == "" {
-		return commandOptions{}, fmt.Errorf("credential or host cannot be empty")
+		return commandOptions{}, overrides, fmt.Errorf("credential or host cannot be empty")
 	}
-
-	result := commandOptions{target: args[0], credentialBackend: credentialBackendAuto}
+	result := commandOptions{target: args[0]}
 	for i := 1; i < len(args); i++ {
-		switch args[i] {
-		case "-x", "--options":
-			if i+1 >= len(args) {
-				return commandOptions{}, fmt.Errorf("%s requires an argument", args[i])
-			}
-			result.programOptions = append(result.programOptions, strings.Fields(args[i+1])...)
-			i++
-		case "--gopass-prefix":
-			if i+1 >= len(args) {
-				return commandOptions{}, fmt.Errorf("--gopass-prefix requires an argument")
-			}
-			if result.gopassPrefix != "" {
-				return commandOptions{}, fmt.Errorf("--gopass-prefix may only be specified once")
-			}
-			prefix, err := normalizeGopassPrefix(args[i+1])
-			if err != nil {
-				return commandOptions{}, err
-			}
-			result.gopassPrefix = prefix
-			i++
-		case "--secret-collection":
-			if i+1 >= len(args) {
-				return commandOptions{}, fmt.Errorf("--secret-collection requires an argument")
-			}
-			if result.secretCollection != "" {
-				return commandOptions{}, fmt.Errorf("--secret-collection may only be specified once")
-			}
-			if args[i+1] == "" {
-				return commandOptions{}, fmt.Errorf("secret collection cannot be empty")
-			}
-			result.secretCollection = args[i+1]
-			i++
-		case "--credential-backend":
-			if i+1 >= len(args) {
-				return commandOptions{}, fmt.Errorf("--credential-backend requires an argument")
-			}
-			if result.credentialBackendSet {
-				return commandOptions{}, fmt.Errorf("--credential-backend may only be specified once")
-			}
-			backend, err := parseCredentialBackend(args[i+1])
-			if err != nil {
-				return commandOptions{}, err
-			}
-			result.credentialBackend = backend
-			result.credentialBackendSet = true
-			i++
-		case "--verbose":
-			result.verbose = true
-		case "--":
+		arg := args[i]
+		if arg == "--" {
 			result.extraArgs = append(result.extraArgs, args[i:]...)
-			return finalizeCommandOptions(result)
+			break
+		}
+		name, value, attached := strings.Cut(arg, "=")
+		switch name {
+		case "--verbose":
+			enabled := true
+			if attached {
+				if value != "true" && value != "false" {
+					return commandOptions{}, overrides, fmt.Errorf("--verbose must be true or false")
+				}
+				enabled = value == "true"
+			}
+			overrides.Verbose = &enabled
+		case "-x", "--options", "--credential-backend", "--secret-collection", "--gopass-prefix":
+			// Only long flags accept attached values; preserve unknown short forms.
+			if name == "-x" && attached {
+				result.extraArgs = append(result.extraArgs, arg)
+				continue
+			}
+			if !attached {
+				if i+1 >= len(args) {
+					return commandOptions{}, overrides, fmt.Errorf("%s requires an argument", name)
+				}
+				i++
+				value = args[i]
+			}
+			var destination **string
+			switch name {
+			case "--credential-backend":
+				destination = &overrides.CredentialBackend
+			case "--secret-collection":
+				destination = &overrides.SecretCollection
+			case "--gopass-prefix":
+				destination = &overrides.GopassPrefix
+			default:
+				if overrides.Options == nil {
+					overrides.Options = &value
+				} else {
+					joined := *overrides.Options + " " + value
+					overrides.Options = &joined
+				}
+				continue
+			}
+			if *destination != nil {
+				return commandOptions{}, overrides, fmt.Errorf("%s may only be specified once", name)
+			}
+			*destination = &value
 		default:
-			result.extraArgs = append(result.extraArgs, args[i])
+			result.extraArgs = append(result.extraArgs, arg)
 		}
 	}
-
-	return finalizeCommandOptions(result)
+	if err := validateOverrides(overrides); err != nil {
+		return commandOptions{}, overrides, err
+	}
+	return result, overrides, nil
 }
 
 func finalizeCommandOptions(result commandOptions) (commandOptions, error) {
