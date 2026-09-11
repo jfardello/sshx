@@ -1,14 +1,17 @@
 # sshx
 
 `sshx` runs OpenSSH with a password stored in a
-[freedesktop.org Secret Service](https://specifications.freedesktop.org/secret-service/latest/)
-provider or [gopass](https://www.gopass.pw/). It does not depend on `sshpass`
-and does not expose the password through command-line arguments or environment
-variables.
+[freedesktop.org Secret Service]
+(https://specifications.freedesktop.org/secret-service/latest/) provider or 
+direct [gopass](https://www.gopass.pw/). When using secret-service it is possible
+to use keepassxc, gnome-keyring, kdewallet, etc.
+
+It doesen't depend on `sshpass` and does not expose the password through 
+command-line arguments or environment variables.
 
 The `ssh` or `scp` process starts in a new session with a PTY as its controlling
-terminal. `sshx` detects the OpenSSH password prompt, writes the password to the
-PTY, and then maintains a normal interactive session. 
+terminal. `sshx` detects the OpenSSH password prompt, writes the password to the PTY,
+ and then maintains a normal interactive session. 
 
 ## Requirements
 
@@ -254,12 +257,29 @@ sshx credentials list --credential-backend secret-service
 sshx credentials list admin --secret-collection '<collection>'
 ```
 
+### KDE KWallet
+
+To make an SSH password available through Secret Service and visible in the KWallet app, store it with the QtKeychain schema and attributes below. 
+KWallet filters the secrets it displays by this schema:
+
+```sh
+secret-tool store \
+  --label='sshx/user@servername' \
+  service sshx \
+  sshx.target 'user@servername' \
+  xdg:schema org.qt.keychain \
+  server sshx \
+  type plaintext \
+  user 'user@servername'
+```
+
+Replace `user@servername` with the SSH destination. Enter the password when
+`secret-tool` prompts for it; keep it out of the command-line arguments.
+The `sshx.target` attribute is used by sshx to resolve the destination.
+
 ### GNOME Keyring
 
-[GNOME Keyring](https://wiki.gnome.org/Projects/GnomeKeyring) normally provides
-Secret Service in a logged-in GNOME session. A credential can be provisioned
-interactively with `secret-tool`; it reads the password from the terminal and
-does not place it in the command line:
+[GNOME Keyring](https://wiki.gnome.org/Projects/GnomeKeyring) normally provides Secret Service in a logged-in GNOME session. A credential can be provisioned interactively with `secret-tool`; it reads the password from the terminal and does not place it in the command line:
 
 ```sh
 secret-tool store \
