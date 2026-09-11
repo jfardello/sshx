@@ -30,16 +30,20 @@ builds:
 
 archives:
   - id: sshx
-    builds:
-      - sshx
     formats:
       - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - README.md
+      - docs/secret-service-smoke-tests.md
 
 checksum:
   name_template: checksums.txt
+
+# Build local test artifacts, including committed or uncommitted changes, with:
+# goreleaser release --snapshot --clean --skip=publish
+snapshot:
+  version_template: "{{ incpatch .Version }}~dev.g{{ .ShortCommit }}{{ if .IsGitDirty }}.dirty{{ end }}"
 
 changelog:
   sort: asc

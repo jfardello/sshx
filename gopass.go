@@ -12,23 +12,19 @@ import (
 
 const gopassNotFoundExitCode = 10
 
-type credentialStore interface {
-	Search(prefix, query string) ([]string, error)
-	Password(entry string) ([]byte, error)
-}
-
 type gopassStore struct {
-	stderr io.Writer
+	stderr         io.Writer
+	executeCommand func(args ...string) ([]byte, []byte, error)
 }
 
 func newGopassStore(stderr io.Writer) *gopassStore {
 	return &gopassStore{stderr: stderr}
 }
 
-func (s *gopassStore) Search(prefix, query string) ([]string, error) {
+func (s *gopassStore) Search(query credentialQuery) ([]credentialRef, error) {
 	args := []string{"list", "--flat"}
-	if prefix != "" {
-		args = append(args, "--", prefix)
+	if query.Collection != "" {
+		args = append(args, "--", query.Collection)
 	}
 
 	output, stderr, err := s.execute(args...)
@@ -51,7 +47,25 @@ func (s *gopassStore) Search(prefix, query string) ([]string, error) {
 	for i := range entries {
 		entries[i] = strings.TrimSuffix(entries[i], "\r")
 	}
-	return filterEntries(entries, prefix, query), nil
+	paths := filterEntries(entries, query.Collection, query.Text)
+	credentials := make([]credentialRef, 0, len(paths))
+	for _, entry := range paths {
+		collection := query.Collection
+		if collection == "" {
+			collection = path.Dir(entry)
+			if collection == "." {
+				collection = ""
+			}
+		}
+		credentials = append(credentials, credentialRef{
+			Backend:    credentialBackendGopass,
+			ID:         entry,
+			Collection: collection,
+			Label:      path.Base(entry),
+			Target:     query.Text,
+		})
+	}
+	return credentials, nil
 }
 
 func filterEntries(entries []string, prefix, query string) []string {
@@ -98,14 +112,25 @@ func appendUnique(values []string, value string) []string {
 	return append(values, value)
 }
 
-func (s *gopassStore) Password(entry string) ([]byte, error) {
-	output, err := s.run("show", "--password", "--", entry)
+func (s *gopassStore) Secret(credential credentialRef) ([]byte, error) {
+	if credential.Backend != credentialBackendGopass {
+		return nil, fmt.Errorf("gopass cannot retrieve credential from backend %q", credential.Backend)
+	}
+	if credential.ID == "" {
+		return nil, fmt.Errorf("gopass credential ID cannot be empty")
+	}
+
+	output, err := s.run("show", "--password", "--", credential.ID)
 	if err != nil {
 		return nil, err
 	}
 	password := append([]byte(nil), bytes.TrimRight(output, "\r\n")...)
 	clearBytes(output)
 	return password, nil
+}
+
+func (s *gopassStore) Close() error {
+	return nil
 }
 
 func (s *gopassStore) run(args ...string) ([]byte, error) {
@@ -118,6 +143,10 @@ func (s *gopassStore) run(args ...string) ([]byte, error) {
 }
 
 func (s *gopassStore) execute(args ...string) ([]byte, []byte, error) {
+	if s.executeCommand != nil {
+		return s.executeCommand(args...)
+	}
+
 	cmd := exec.Command("gopass", args...)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

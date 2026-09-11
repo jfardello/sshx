@@ -20,9 +20,10 @@ func TestParseCommandOptionsPreservesOriginalSyntax(t *testing.T) {
 	}
 
 	want := commandOptions{
-		target:         "user@example.com",
-		programOptions: []string{"-L", "8080:localhost:8080", "-p", "2222"},
-		extraArgs:      []string{"-t", "remote command"},
+		target:            "user@example.com",
+		credentialBackend: credentialBackendAuto,
+		programOptions:    []string{"-L", "8080:localhost:8080", "-p", "2222"},
+		extraArgs:         []string{"-t", "remote command"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("parseCommandOptions() = %#v, want %#v", got, want)
@@ -54,6 +55,56 @@ func TestParseCommandOptionsSupportsGopassPrefixAndVerbose(t *testing.T) {
 	}
 }
 
+func TestParseCommandOptionsSupportsCredentialBackends(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want credentialBackend
+	}{
+		{name: "default", args: []string{"host"}, want: credentialBackendAuto},
+		{name: "auto", args: []string{"host", "--credential-backend", "auto"}, want: credentialBackendAuto},
+		{name: "secret service", args: []string{"host", "--credential-backend", "secret-service"}, want: credentialBackendSecretService},
+		{name: "gopass", args: []string{"host", "--credential-backend", "gopass"}, want: credentialBackendGopass},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := parseCommandOptions(test.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.credentialBackend != test.want {
+				t.Fatalf("credential backend = %q, want %q", got.credentialBackend, test.want)
+			}
+		})
+	}
+}
+
+func TestParseCommandOptionsRejectsInvalidCredentialBackend(t *testing.T) {
+	_, err := parseCommandOptions([]string{"host", "--credential-backend", "unknown"})
+	if err == nil || !strings.Contains(err.Error(), "invalid credential backend") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseCommandOptionsRequiresCredentialBackendValue(t *testing.T) {
+	_, err := parseCommandOptions([]string{"host", "--credential-backend"})
+	if err == nil || !strings.Contains(err.Error(), "requires an argument") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseCommandOptionsRejectsDuplicateCredentialBackend(t *testing.T) {
+	_, err := parseCommandOptions([]string{
+		"host",
+		"--credential-backend", "auto",
+		"--credential-backend", "gopass",
+	})
+	if err == nil || !strings.Contains(err.Error(), "may only be specified once") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestParseCommandOptionsRejectsUnsafeGopassPrefix(t *testing.T) {
 	for _, prefix := range []string{"/absolute", "../production", "production/../other", "production/./other"} {
 		t.Run(prefix, func(t *testing.T) {
@@ -82,22 +133,26 @@ func TestSelectCredential(t *testing.T) {
 	tests := []struct {
 		name     string
 		target   string
-		entries  []string
+		entries  []credentialRef
 		entry    string
 		host     string
 		selected bool
 	}{
-		{"one result", "user@host", []string{"servers/user@host"}, "servers/user@host", "user@host", true},
-		{"ambiguous", "host", []string{"a/host", "b/host"}, "", "", false},
+		{"one result", "user@host", gopassCredentialRefs("servers/user@host"), "servers/user@host", "user@host", true},
+		{"ambiguous", "host", gopassCredentialRefs("a/host", "b/host"), "", "", false},
 		{"not found", "host", nil, "", "", false},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			entry, host, selected := selectCredential(test.target, test.entries)
-			if entry != test.entry || host != test.host || selected != test.selected {
+			credentials, err := matchCredentials(test.target, test.entries)
+			if err != nil {
+				t.Fatal(err)
+			}
+			credential, selected := selectCredential(credentials)
+			if credential.ID != test.entry || credential.Target != test.host || selected != test.selected {
 				t.Fatalf("got (%q, %q, %v), want (%q, %q, %v)",
-					entry, host, selected, test.entry, test.host, test.selected)
+					credential.ID, credential.Target, selected, test.entry, test.host, test.selected)
 			}
 		})
 	}
@@ -145,12 +200,12 @@ func TestSSHCommandSupportsImplicitAndExplicitSyntax(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			store := &recordingStore{entries: []string{"servers/user@example.com"}}
+			store := &recordingStore{entries: gopassCredentialRefs("servers/user@example.com")}
 			runner := &recordingRunner{}
 			cmd := newRootCommandWithDependencies(dependencies{
-				store:      store,
-				runProgram: runner.run,
-				stdout:     &bytes.Buffer{},
+				gopassStore: store,
+				runProgram:  runner.run,
+				stdout:      &bytes.Buffer{},
 			})
 			cmd.SetArgs(test.args)
 
@@ -178,14 +233,14 @@ func TestSSHCommandSupportsImplicitAndExplicitSyntax(t *testing.T) {
 }
 
 func TestSSHCommandScopesSearchAndLogsSelectedEntry(t *testing.T) {
-	store := &recordingStore{entries: []string{"infrastructure/production/servers/user@example.com"}}
+	store := &recordingStore{entries: gopassCredentialRefs("infrastructure/production/servers/user@example.com")}
 	runner := &recordingRunner{}
 	var stderr bytes.Buffer
 	cmd := newRootCommandWithDependencies(dependencies{
-		store:      store,
-		runProgram: runner.run,
-		stdout:     &bytes.Buffer{},
-		stderr:     &stderr,
+		gopassStore: store,
+		runProgram:  runner.run,
+		stdout:      &bytes.Buffer{},
+		stderr:      &stderr,
 	})
 	cmd.SetArgs([]string{
 		"ssh", "user@example.com",
@@ -218,10 +273,10 @@ func TestExplicitGopassPathSkipsSearchAndUsesPrefix(t *testing.T) {
 			"--verbose",
 		},
 		dependencies{
-			store:      store,
-			runProgram: runner.run,
-			stdout:     &bytes.Buffer{},
-			stderr:     &stderr,
+			gopassStore: store,
+			runProgram:  runner.run,
+			stdout:      &bytes.Buffer{},
+			stderr:      &stderr,
 		},
 	)
 	if err != nil {
@@ -241,12 +296,76 @@ func TestExplicitGopassPathSkipsSearchAndUsesPrefix(t *testing.T) {
 
 func TestCredentialLookupReportsNoMatches(t *testing.T) {
 	store := &recordingStore{}
-	_, _, _, err := resolveCredential(
+	_, _, err := resolveCredential(
 		commandOptions{target: "missing", gopassPrefix: "production"},
-		dependencies{store: store, stdout: &bytes.Buffer{}},
+		selectedCredentialStore{backend: credentialBackendGopass, store: store},
+		dependencies{gopassStore: store, stdout: &bytes.Buffer{}},
 	)
 	if err == nil || !strings.Contains(err.Error(), `no gopass entry matching "missing" under gopass path "production"`) {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAmbiguousCredentialLookupDoesNotRetrieveSecret(t *testing.T) {
+	store := &recordingStore{entries: gopassCredentialRefs("first/host", "second/host")}
+	var stdout bytes.Buffer
+
+	err := executeSSH(
+		[]string{"host"},
+		dependencies{
+			gopassStore: store,
+			runProgram:  (&recordingRunner{}).run,
+			stdout:      &stdout,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.secretCalls != 0 {
+		t.Fatalf("Secret() calls = %d, want 0", store.secretCalls)
+	}
+	if got := stdout.String(); got != "Please choose one of:\nfirst/host\nsecond/host\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestExplicitSecretServiceDoesNotFallBackToGopass(t *testing.T) {
+	store := &recordingStore{entries: gopassCredentialRefs("servers/user@example.com")}
+	err := executeSSH(
+		[]string{"user@example.com", "--credential-backend", "secret-service"},
+		dependencies{
+			gopassStore: store,
+			runProgram:  (&recordingRunner{}).run,
+			stdout:      &bytes.Buffer{},
+		},
+	)
+	if err == nil || !isCredentialBackendUnavailable(err) {
+		t.Fatalf("error = %v, want backend-unavailable error", err)
+	}
+	if store.searchCalls != 0 || store.secretCalls != 0 {
+		t.Fatalf("gopass calls = search %d, secret %d; want none", store.searchCalls, store.secretCalls)
+	}
+}
+
+func TestSSHClosesCredentialStoreAndReturnsCleanupError(t *testing.T) {
+	cleanupErr := errors.New("close failed")
+	store := &recordingStore{
+		entries:  gopassCredentialRefs("servers/user@example.com"),
+		closeErr: cleanupErr,
+	}
+	err := executeSSH(
+		[]string{"user@example.com"},
+		dependencies{
+			gopassStore: store,
+			runProgram:  (&recordingRunner{}).run,
+			stdout:      &bytes.Buffer{},
+		},
+	)
+	if !errors.Is(err, cleanupErr) {
+		t.Fatalf("executeSSH() error = %v, want cleanup error", err)
+	}
+	if store.closeCalls != 1 {
+		t.Fatalf("Close() calls = %d, want 1", store.closeCalls)
 	}
 }
 
@@ -270,12 +389,12 @@ func TestSCPCommandExpandsRemotePlaceholder(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			store := &recordingStore{entries: []string{"ignored"}}
+			store := &recordingStore{entries: gopassCredentialRefs("ignored")}
 			runner := &recordingRunner{}
 			cmd := newRootCommandWithDependencies(dependencies{
-				store:      store,
-				runProgram: runner.run,
-				stdout:     &bytes.Buffer{},
+				gopassStore: store,
+				runProgram:  runner.run,
+				stdout:      &bytes.Buffer{},
 			})
 			args := []string{"scp", "servers/user@example.com", "-x", "-r -P 2222"}
 			args = append(args, test.operands...)
@@ -298,11 +417,11 @@ func TestSCPCommandExpandsRemotePlaceholder(t *testing.T) {
 }
 
 func TestSCPRejectsRemoteToRemoteCopy(t *testing.T) {
-	store := &recordingStore{entries: []string{"servers/user@example.com"}}
+	store := &recordingStore{entries: gopassCredentialRefs("servers/user@example.com")}
 	runner := &recordingRunner{}
 	err := executeSCP(
 		[]string{"user@example.com", "first:/source", "second:/destination"},
-		dependencies{store: store, runProgram: runner.run, stdout: &bytes.Buffer{}},
+		dependencies{gopassStore: store, runProgram: runner.run, stdout: &bytes.Buffer{}},
 	)
 	if err == nil || !strings.Contains(err.Error(), "remote-to-remote") {
 		t.Fatalf("error = %v, want remote-to-remote rejection", err)
@@ -377,23 +496,54 @@ func (r *chunkReader) Read(p []byte) (int, error) {
 }
 
 type recordingStore struct {
-	entries       []string
+	entries       []credentialRef
+	searchErr     error
 	searchPrefix  string
 	searchQuery   string
 	searchCalls   int
+	secretCalls   int
+	secretErr     error
+	secret        []byte
+	closeCalls    int
+	closeErr      error
 	passwordEntry string
+	credential    credentialRef
 }
 
-func (s *recordingStore) Search(prefix, query string) ([]string, error) {
+func (s *recordingStore) Search(query credentialQuery) ([]credentialRef, error) {
 	s.searchCalls++
-	s.searchPrefix = prefix
-	s.searchQuery = query
-	return s.entries, nil
+	s.searchPrefix = query.Collection
+	s.searchQuery = query.Text
+	return s.entries, s.searchErr
 }
 
-func (s *recordingStore) Password(entry string) ([]byte, error) {
-	s.passwordEntry = entry
+func (s *recordingStore) Secret(credential credentialRef) ([]byte, error) {
+	s.secretCalls++
+	s.passwordEntry = credential.ID
+	s.credential = credential
+	if s.secretErr != nil {
+		return nil, s.secretErr
+	}
+	if s.secret != nil {
+		return append([]byte(nil), s.secret...), nil
+	}
 	return []byte("secret"), nil
+}
+
+func (s *recordingStore) Close() error {
+	s.closeCalls++
+	return s.closeErr
+}
+
+func gopassCredentialRefs(entries ...string) []credentialRef {
+	credentials := make([]credentialRef, 0, len(entries))
+	for _, entry := range entries {
+		credentials = append(credentials, credentialRef{
+			Backend: credentialBackendGopass,
+			ID:      entry,
+		})
+	}
+	return credentials
 }
 
 type recordingRunner struct {
