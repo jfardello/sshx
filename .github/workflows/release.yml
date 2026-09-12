@@ -54,6 +54,11 @@ jobs:
           -- env SSHX_SECRET_SERVICE_INTEGRATION=1
           go test -race -run '^TestSecretServiceIntegration$' -count=1 ./...
 
+      - name: Run OpenSSH agent interoperability tests
+        run: >-
+          env SSHX_AGENT_OPENSSH_INTEGRATION=1
+          go test -race -run '^TestAgentOpenSSHIntegration$' -count=1 ./...
+
       - name: Run race tests
         run: go test -race ./...
 
@@ -63,11 +68,11 @@ jobs:
       - name: Cross-build release targets without CGO
         run: |
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-            go build -trimpath -o "${RUNNER_TEMP}/sshx-linux-amd64" .
+            go build -trimpath -o "${RUNNER_TEMP}/sshx-linux-amd64" ./cmd/sshx
           file "${RUNNER_TEMP}/sshx-linux-amd64"
           file "${RUNNER_TEMP}/sshx-linux-amd64" | grep -q "statically linked"
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
-            go build -trimpath -o "${RUNNER_TEMP}/sshx-darwin-arm64" .
+            go build -trimpath -o "${RUNNER_TEMP}/sshx-darwin-arm64" ./cmd/sshx
           file "${RUNNER_TEMP}/sshx-darwin-arm64"
 
       - name: Validate GoReleaser configuration

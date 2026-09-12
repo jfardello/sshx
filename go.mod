@@ -1,4 +1,4 @@
-module sshx
+module github.com/jfardello/sshx
 
 go 1.26.0
 

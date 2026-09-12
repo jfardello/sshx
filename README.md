@@ -34,13 +34,9 @@ To build from source, install Go 1.26 or later and run:
 
 ```sh
 go test ./...
-go build -o sshx .
+go build -o sshx ./cmd/sshx
 install -m 0755 sshx "${HOME}/.local/bin/sshx"
 ```
-
-The native-agent credential-store foundation is documented in
-[SSH key registration](docs/ssh-key-registry.md). Agent commands and key-based
-authentication through sshx are not enabled by this phase.
 
 ## Configuration file
 

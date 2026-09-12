@@ -10,7 +10,7 @@ project_name: sshx
 
 builds:
   - id: sshx
-    main: .
+    main: ./cmd/sshx
     binary: sshx
     env:
       - CGO_ENABLED=0
@@ -35,8 +35,7 @@ archives:
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - README.md
-      - docs/secret-service-smoke-tests.md
-      - docs/ssh-key-registry.md
+      - docs/*
 
 checksum:
   name_template: checksums.txt
