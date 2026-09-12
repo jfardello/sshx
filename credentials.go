@@ -64,6 +64,7 @@ Secret values and complete attribute maps are never requested or displayed.`,
 		if len(args) == 1 {
 			query = args[0]
 		}
+		deps.ctx = cmd.Context()
 		return executeCredentialList(query, options, deps)
 	}
 	return cmd
@@ -75,6 +76,7 @@ func executeCredentialList(query string, options commandOptions, deps dependenci
 		dependencyGOOS(deps),
 		deps.gopassStore,
 		deps.secretServiceStore,
+		dependencyContext(deps),
 	)
 	if err != nil {
 		return fmt.Errorf("could not select credential backend: %w", err)
@@ -89,7 +91,7 @@ func executeCredentialList(query string, options commandOptions, deps dependenci
 	if selection.backend == credentialBackendSecretService {
 		collection = options.secretCollection
 	}
-	credentials, err := selection.store.Search(credentialQuery{
+	credentials, err := selection.store.Search(dependencyContext(deps), credentialQuery{AllowInteraction: true,
 		Collection: collection,
 		Text:       query,
 	})

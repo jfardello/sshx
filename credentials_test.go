@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -12,7 +13,7 @@ func TestCredentialsListEmptyResultPrintsStableHeaderWithoutReadingSecrets(t *te
 	var output bytes.Buffer
 	cmd := newRootCommandWithDependencies(dependencies{
 		goos: "linux",
-		secretServiceStore: func() (credentialStore, error) {
+		secretServiceStore: func(context.Context) (credentialStore, error) {
 			return store, nil
 		},
 		stdout: &output,
@@ -60,7 +61,7 @@ func TestCredentialsListFiltersUsingResolverPriority(t *testing.T) {
 	var output bytes.Buffer
 	cmd := newRootCommandWithDependencies(dependencies{
 		goos: "linux",
-		secretServiceStore: func() (credentialStore, error) {
+		secretServiceStore: func(context.Context) (credentialStore, error) {
 			return store, nil
 		},
 		stdout: &output,
@@ -103,7 +104,7 @@ func TestCredentialsListPrintsAmbiguousMatchesInStableOrder(t *testing.T) {
 	var output bytes.Buffer
 	cmd := newRootCommandWithDependencies(dependencies{
 		goos: "linux",
-		secretServiceStore: func() (credentialStore, error) {
+		secretServiceStore: func(context.Context) (credentialStore, error) {
 			return store, nil
 		},
 		stdout: &output,
@@ -125,7 +126,7 @@ func TestCredentialsListScopesSecretServiceCollection(t *testing.T) {
 	store := &recordingStore{}
 	cmd := newRootCommandWithDependencies(dependencies{
 		goos: "linux",
-		secretServiceStore: func() (credentialStore, error) {
+		secretServiceStore: func(context.Context) (credentialStore, error) {
 			return store, nil
 		},
 		stdout: &bytes.Buffer{},
@@ -152,7 +153,7 @@ func TestCredentialsListGopassPrefixImpliesLegacyBackend(t *testing.T) {
 	cmd := newRootCommandWithDependencies(dependencies{
 		goos:        "linux",
 		gopassStore: gopass,
-		secretServiceStore: func() (credentialStore, error) {
+		secretServiceStore: func(context.Context) (credentialStore, error) {
 			providerCalls++
 			return &recordingStore{}, nil
 		},
@@ -221,7 +222,7 @@ func TestCredentialsListSanitizesMetadataAndToleratesInvalidTarget(t *testing.T)
 	var output bytes.Buffer
 	cmd := newRootCommandWithDependencies(dependencies{
 		goos: "linux",
-		secretServiceStore: func() (credentialStore, error) {
+		secretServiceStore: func(context.Context) (credentialStore, error) {
 			return store, nil
 		},
 		stdout: &output,
@@ -244,7 +245,7 @@ func TestCredentialsListJoinsCloseError(t *testing.T) {
 	store := &recordingStore{searchErr: searchErr, closeErr: closeErr}
 	cmd := newRootCommandWithDependencies(dependencies{
 		goos: "linux",
-		secretServiceStore: func() (credentialStore, error) {
+		secretServiceStore: func(context.Context) (credentialStore, error) {
 			return store, nil
 		},
 		stdout: &bytes.Buffer{},
@@ -274,7 +275,7 @@ func TestVerboseSecretServiceDiagnosticContainsOnlyIdentityMetadata(t *testing.T
 	var stderr bytes.Buffer
 	cmd := newRootCommandWithDependencies(dependencies{
 		goos: "linux",
-		secretServiceStore: func() (credentialStore, error) {
+		secretServiceStore: func(context.Context) (credentialStore, error) {
 			return store, nil
 		},
 		runProgram: (&recordingRunner{}).run,

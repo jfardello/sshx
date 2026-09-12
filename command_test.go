@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"reflect"
@@ -510,14 +511,14 @@ type recordingStore struct {
 	credential    credentialRef
 }
 
-func (s *recordingStore) Search(query credentialQuery) ([]credentialRef, error) {
+func (s *recordingStore) Search(ctx context.Context, query credentialQuery) ([]credentialRef, error) {
 	s.searchCalls++
 	s.searchPrefix = query.Collection
 	s.searchQuery = query.Text
 	return s.entries, s.searchErr
 }
 
-func (s *recordingStore) Secret(credential credentialRef) ([]byte, error) {
+func (s *recordingStore) Secret(ctx context.Context, credential credentialRef, options ...credentialReadOptions) ([]byte, error) {
 	s.secretCalls++
 	s.passwordEntry = credential.ID
 	s.credential = credential

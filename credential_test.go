@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -14,7 +15,7 @@ func TestSelectCredentialStoreUsesExplicitGopass(t *testing.T) {
 		credentialBackendGopass,
 		"linux",
 		gopass,
-		func() (credentialStore, error) {
+		func(context.Context) (credentialStore, error) {
 			secretServiceCalls++
 			return &recordingStore{}, nil
 		},
@@ -38,7 +39,7 @@ func TestSelectCredentialStoreUsesAvailableSecretService(t *testing.T) {
 		credentialBackendAuto,
 		"linux",
 		gopass,
-		func() (credentialStore, error) {
+		func(context.Context) (credentialStore, error) {
 			return secretService, nil
 		},
 	)
@@ -58,7 +59,7 @@ func TestSelectCredentialStoreAutoUsesGopassOffLinux(t *testing.T) {
 		credentialBackendAuto,
 		"darwin",
 		gopass,
-		func() (credentialStore, error) {
+		func(context.Context) (credentialStore, error) {
 			providerCalls++
 			return &recordingStore{}, nil
 		},
@@ -82,7 +83,7 @@ func TestSelectCredentialStoreExplicitSecretServiceIgnoresAutoPlatformPolicy(t *
 		credentialBackendSecretService,
 		"darwin",
 		&recordingStore{},
-		func() (credentialStore, error) {
+		func(context.Context) (credentialStore, error) {
 			providerCalls++
 			return secretService, nil
 		},
@@ -105,7 +106,7 @@ func TestSelectCredentialStoreAutoFallsBackOnlyWhenUnavailable(t *testing.T) {
 		credentialBackendAuto,
 		"linux",
 		gopass,
-		func() (credentialStore, error) {
+		func(context.Context) (credentialStore, error) {
 			return nil, newCredentialBackendUnavailableError(
 				credentialBackendSecretService,
 				errors.New("session bus is unavailable"),
@@ -124,7 +125,7 @@ func TestSelectCredentialStoreAutoFallsBackOnlyWhenUnavailable(t *testing.T) {
 		credentialBackendAuto,
 		"linux",
 		gopass,
-		func() (credentialStore, error) {
+		func(context.Context) (credentialStore, error) {
 			return nil, providerErr
 		},
 	)

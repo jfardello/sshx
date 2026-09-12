@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -36,23 +37,67 @@ type secretServiceTransport interface {
 	GetProperty(objectPath dbus.ObjectPath, property string) (dbus.Variant, error)
 	Prompt(objectPath dbus.ObjectPath, windowID string) (dbus.Variant, bool, error)
 	Close() error
+	WithContext(context.Context) secretServiceTransport
+	Owner(context.Context) (string, error)
+	WithOwner(string) secretServiceTransport
 }
 
 type dbusSecretServiceTransport struct {
-	conn *dbus.Conn
+	conn             *dbus.Conn
+	ctx              context.Context
+	destination      string
+	cancelConnection context.CancelFunc
 }
 
-func connectSecretServiceTransport() (secretServiceTransport, error) {
-	conn, err := dbus.ConnectSessionBus()
-	if err != nil {
+// The connection outlives the operation context after successful setup. During
+// setup, cancellation closes an authenticated or still-authenticating connection.
+func connectSecretServiceTransport(ctx context.Context) (secretServiceTransport, error) {
+	ctx, timeout := context.WithTimeout(ctx, credentialOperationTimeout)
+	defer timeout()
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return &dbusSecretServiceTransport{conn: conn}, nil
+	connectionContext, cancelConnection := context.WithCancel(context.Background())
+	stop := context.AfterFunc(ctx, cancelConnection)
+	type result struct {
+		conn *dbus.Conn
+		err  error
+	}
+	results := make(chan result)
+	go func() {
+		conn, err := dbus.ConnectSessionBus(dbus.WithContext(connectionContext))
+		select {
+		case results <- result{conn, err}:
+		case <-ctx.Done():
+			if conn != nil {
+				_ = conn.Close()
+			}
+		}
+	}()
+	select {
+	case <-ctx.Done():
+		stop()
+		cancelConnection()
+		return nil, ctx.Err()
+	case result := <-results:
+		if !stop() || ctx.Err() != nil {
+			cancelConnection()
+			if result.conn != nil {
+				_ = result.conn.Close()
+			}
+			return nil, ctx.Err()
+		}
+		if result.err != nil {
+			cancelConnection()
+			return nil, result.err
+		}
+		return &dbusSecretServiceTransport{conn: result.conn, cancelConnection: cancelConnection}, nil
+	}
 }
 
 func (t *dbusSecretServiceTransport) Activate() error {
 	var result uint32
-	err := t.conn.BusObject().Call(
+	err := t.conn.BusObject().CallWithContext(t.context(),
 		"org.freedesktop.DBus.StartServiceByName",
 		0,
 		secretServiceBusName,
@@ -72,39 +117,53 @@ func (t *dbusSecretServiceTransport) Call(
 	method string,
 	args ...any,
 ) *dbus.Call {
-	return t.conn.Object(secretServiceBusName, objectPath).Call(method, 0, args...)
+	return t.conn.Object(t.busName(), objectPath).CallWithContext(t.context(), method, 0, args...)
 }
 
 func (t *dbusSecretServiceTransport) GetProperty(
 	objectPath dbus.ObjectPath,
 	property string,
 ) (dbus.Variant, error) {
-	return t.conn.Object(secretServiceBusName, objectPath).GetProperty(property)
+	i := strings.LastIndex(property, ".")
+	var result dbus.Variant
+	err := t.Call(objectPath, "org.freedesktop.DBus.Properties.Get", property[:i], property[i+1:]).Store(&result)
+	return result, err
 }
 
 func (t *dbusSecretServiceTransport) Prompt(
 	objectPath dbus.ObjectPath,
 	windowID string,
 ) (result dbus.Variant, dismissed bool, returnErr error) {
+	owner, err := t.Owner(t.context())
+	if err != nil {
+		return dbus.Variant{}, false, err
+	}
+	pinned := t.WithOwner(owner)
 	options := []dbus.MatchOption{
 		dbus.WithMatchObjectPath(objectPath),
 		dbus.WithMatchInterface(secretServicePromptInterface),
 		dbus.WithMatchMember("Completed"),
+		dbus.WithMatchSender(owner),
 	}
 	signals := make(chan *dbus.Signal, 1)
 	t.conn.Signal(signals)
 	defer t.conn.RemoveSignal(signals)
 
-	if err := t.conn.AddMatchSignal(options...); err != nil {
+	if err := t.conn.AddMatchSignalContext(t.context(), options...); err != nil {
 		return dbus.Variant{}, false, err
 	}
 	defer func() {
-		if err := t.conn.RemoveMatchSignal(options...); err != nil {
+		cleanup, cancel := context.WithTimeout(context.Background(), credentialCleanupTimeout)
+		defer cancel()
+		if t.context().Err() != nil {
+			_ = pinned.WithContext(cleanup).Call(objectPath, secretServicePromptInterface+".Dismiss").Store()
+		}
+		if err := t.conn.RemoveMatchSignalContext(cleanup, options...); err != nil {
 			returnErr = errors.Join(returnErr, fmt.Errorf("remove prompt signal match: %w", err))
 		}
 	}()
 
-	if call := t.Call(
+	if call := pinned.Call(
 		objectPath,
 		secretServicePromptInterface+".Prompt",
 		windowID,
@@ -114,8 +173,16 @@ func (t *dbusSecretServiceTransport) Prompt(
 		return dbus.Variant{}, false, err
 	}
 
-	for signal := range signals {
-		if signal == nil || signal.Path != objectPath ||
+	for {
+		var signal *dbus.Signal
+		select {
+		case <-t.context().Done():
+			return dbus.Variant{}, false, t.context().Err()
+		case <-t.conn.Context().Done():
+			return dbus.Variant{}, false, errCredentialProviderChanged
+		case signal = <-signals:
+		}
+		if signal == nil || signal.Sender != owner || signal.Path != objectPath ||
 			signal.Name != secretServicePromptInterface+".Completed" {
 			continue
 		}
@@ -125,10 +192,12 @@ func (t *dbusSecretServiceTransport) Prompt(
 		return result, dismissed, nil
 	}
 
-	return dbus.Variant{}, false, errors.New("D-Bus connection closed while waiting for Secret Service prompt")
 }
 
 func (t *dbusSecretServiceTransport) Close() error {
+	if t.cancelConnection != nil {
+		defer t.cancelConnection()
+	}
 	return t.conn.Close()
 }
 
@@ -138,14 +207,24 @@ type secretServiceStore struct {
 	closeErr  error
 }
 
-func newSecretServiceStore() (credentialStore, error) {
-	return newSecretServiceStoreForOS(runtime.GOOS, connectSecretServiceTransport)
+func newSecretServiceStore(ctx context.Context) (credentialStore, error) {
+	return newSecretServiceStoreForOS(runtime.GOOS, func() (secretServiceTransport, error) { return connectSecretServiceTransport(ctx) }, ctx)
 }
 
 func newSecretServiceStoreForOS(
 	goos string,
 	connect func() (secretServiceTransport, error),
+	contexts ...context.Context,
 ) (credentialStore, error) {
+	ctx := context.Background()
+	if len(contexts) > 0 {
+		ctx = contexts[0]
+	}
+	ctx, cancel := context.WithTimeout(ctx, credentialOperationTimeout)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if !secretServiceSupportedOS(goos) {
 		return nil, newCredentialBackendUnavailableError(
 			credentialBackendSecretService,
@@ -164,7 +243,7 @@ func newSecretServiceStoreForOS(
 		)
 	}
 
-	if err := transport.Activate(); err != nil {
+	if err := transport.WithContext(ctx).Activate(); err != nil {
 		activationErr := classifySecretServiceActivationError(err)
 		if closeErr := transport.Close(); closeErr != nil {
 			activationErr = errors.Join(activationErr, fmt.Errorf("close D-Bus connection: %w", closeErr))
@@ -176,6 +255,9 @@ func newSecretServiceStoreForOS(
 }
 
 func classifySecretServiceConnectionError(err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
 	wrapped := fmt.Errorf("connect to D-Bus session bus: %w", err)
 	name, isDBusError := secretServiceDBusErrorName(err)
 	if errors.Is(err, os.ErrPermission) ||
@@ -227,7 +309,7 @@ func secretServiceDBusErrorName(err error) (string, bool) {
 	return "", false
 }
 
-func (s *secretServiceStore) Search(query credentialQuery) ([]credentialRef, error) {
+func (s *secretServiceStore) search(query credentialQuery) ([]credentialRef, error) {
 	collectionPaths, err := s.objectPathsProperty(
 		secretServicePath,
 		secretServiceInterface+".Collections",
@@ -289,7 +371,7 @@ func (s *secretServiceStore) Search(query credentialQuery) ([]credentialRef, err
 		if err != nil {
 			return nil, fmt.Errorf("read Secret Service collection lock state: %w", err)
 		}
-		if locked {
+		if locked && query.AllowInteraction {
 			if err := s.unlockObject(collection.path, secretServiceCollectionInterface); err != nil {
 				return nil, fmt.Errorf("unlock Secret Service collection %q: %w", collection.label, err)
 			}
@@ -308,7 +390,10 @@ func (s *secretServiceStore) Search(query credentialQuery) ([]credentialRef, err
 			if err != nil {
 				return nil, err
 			}
-			credentials = append(credentials, credential)
+			if attributesMatch(credential.Attributes, query.Attributes) {
+				credential.Locked = credential.Locked || locked
+				credentials = append(credentials, credential)
+			}
 		}
 	}
 
@@ -369,7 +454,7 @@ func (s *secretServiceStore) itemMetadata(
 	}, nil
 }
 
-func (s *secretServiceStore) Secret(credential credentialRef) (secret []byte, returnErr error) {
+func (s *secretServiceStore) secret(credential credentialRef, allowInteraction bool) (secret []byte, returnErr error) {
 	if credential.Backend != credentialBackendSecretService {
 		return nil, fmt.Errorf("Secret Service cannot retrieve credential from backend %q", credential.Backend)
 	}
@@ -384,6 +469,9 @@ func (s *secretServiceStore) Secret(credential credentialRef) (secret []byte, re
 		return nil, fmt.Errorf("read Secret Service item lock state: %w", err)
 	}
 	if locked {
+		if !allowInteraction {
+			return nil, errCredentialLocked
+		}
 		if err := s.unlockObject(itemPath, secretServiceItemInterface); err != nil {
 			return nil, fmt.Errorf("unlock Secret Service item: %w", err)
 		}
@@ -428,6 +516,9 @@ func (s *secretServiceStore) Secret(credential credentialRef) (secret []byte, re
 		return nil, errors.New("malformed Secret Service secret: plain session returned parameters")
 	}
 
+	if len(response.Value) > maxCredentialOutputBytes {
+		return nil, errCredentialTooLarge
+	}
 	return append([]byte(nil), response.Value...), nil
 }
 
@@ -496,7 +587,9 @@ func isValidPlainSessionOutput(output dbus.Variant) bool {
 }
 
 func (s *secretServiceStore) closeSession(sessionPath dbus.ObjectPath) error {
-	call := s.transport.Call(sessionPath, secretServiceSessionInterface+".Close")
+	ctx, cancel := context.WithTimeout(context.Background(), credentialCleanupTimeout)
+	defer cancel()
+	call := s.transport.WithContext(ctx).Call(sessionPath, secretServiceSessionInterface+".Close")
 	if call == nil {
 		return errors.New("close Secret Service session: nil D-Bus call")
 	}
@@ -646,4 +739,52 @@ func (s *secretServiceStore) Close() error {
 		s.closeErr = s.transport.Close()
 	})
 	return s.closeErr
+}
+
+func (t *dbusSecretServiceTransport) context() context.Context {
+	if t.ctx != nil {
+		return t.ctx
+	}
+	return context.Background()
+}
+func (t *dbusSecretServiceTransport) busName() string {
+	if t.destination != "" {
+		return t.destination
+	}
+	return secretServiceBusName
+}
+func (t *dbusSecretServiceTransport) WithContext(ctx context.Context) secretServiceTransport {
+	return &dbusSecretServiceTransport{conn: t.conn, ctx: ctx, destination: t.destination, cancelConnection: t.cancelConnection}
+}
+func (s *secretServiceStore) Search(ctx context.Context, query credentialQuery) ([]credentialRef, error) {
+	ctx, cancel := context.WithTimeout(ctx, credentialOperationTimeout)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	scoped := &secretServiceStore{transport: s.transport.WithContext(ctx)}
+	refs, err := scoped.search(query)
+	if err != nil && !query.AllowInteraction {
+		return nil, sanitizeKeyReadError(ctx, keyProviderError(err))
+	}
+	return refs, err
+}
+func (s *secretServiceStore) Secret(ctx context.Context, ref credentialRef, options ...credentialReadOptions) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, credentialOperationTimeout)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	scoped := &secretServiceStore{transport: s.transport.WithContext(ctx)}
+	interactive := len(options) == 1 && options[0].AllowInteraction
+	return scoped.secret(ref, interactive)
+}
+func attributesMatch(actual, required map[string]string) bool {
+	for k, v := range required {
+		value, exists := actual[k]
+		if !exists || value != v {
+			return false
+		}
+	}
+	return true
 }

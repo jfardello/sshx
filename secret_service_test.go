@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"reflect"
@@ -152,7 +153,7 @@ func TestSecretServiceSearchReturnsMetadataWithoutReadingSecrets(t *testing.T) {
 	transport.setProperty(itemPath, secretServiceItemInterface+".Locked", true)
 
 	store := &secretServiceStore{transport: transport}
-	credentials, err := store.Search(credentialQuery{Collection: "Login", Text: "host"})
+	credentials, err := store.Search(context.Background(), credentialQuery{AllowInteraction: true, Collection: "Login", Text: "host"})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -187,7 +188,7 @@ func TestSecretServiceSearchScopesCollectionByPathName(t *testing.T) {
 	transport.setProperty(collectionPath, secretServiceCollectionInterface+".Items", []dbus.ObjectPath{})
 
 	store := &secretServiceStore{transport: transport}
-	credentials, err := store.Search(credentialQuery{Collection: "login"})
+	credentials, err := store.Search(context.Background(), credentialQuery{AllowInteraction: true, Collection: "login"})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -206,7 +207,7 @@ func TestSecretServiceSearchScopesCollectionByAlias(t *testing.T) {
 	transport.setProperty(collectionPath, secretServiceCollectionInterface+".Items", []dbus.ObjectPath{})
 
 	store := &secretServiceStore{transport: transport}
-	credentials, err := store.Search(credentialQuery{Collection: "default"})
+	credentials, err := store.Search(context.Background(), credentialQuery{AllowInteraction: true, Collection: "default"})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -229,7 +230,7 @@ func TestSecretServiceSearchRejectsDuplicateCollectionSelector(t *testing.T) {
 	transport.setProperty(secondPath, secretServiceCollectionInterface+".Label", "Work")
 
 	store := &secretServiceStore{transport: transport}
-	_, err := store.Search(credentialQuery{Collection: "Work"})
+	_, err := store.Search(context.Background(), credentialQuery{AllowInteraction: true, Collection: "Work"})
 	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
 		t.Fatalf("Search() error = %v, want ambiguous collection error", err)
 	}
@@ -255,7 +256,7 @@ func TestSecretServiceSearchUnlocksCollection(t *testing.T) {
 	))
 
 	store := &secretServiceStore{transport: transport}
-	if _, err := store.Search(credentialQuery{}); err != nil {
+	if _, err := store.Search(context.Background(), credentialQuery{AllowInteraction: true}); err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
 	if len(transport.callLog) != 1 || transport.callLog[0].method != secretServiceInterface+".Unlock" {
@@ -281,7 +282,7 @@ func TestSecretServiceSecretRetrievesOnlySelectedUnlockedItem(t *testing.T) {
 	transport.addCall(sessionPath, secretServiceSessionInterface+".Close", successfulSecretServiceCall())
 
 	store := &secretServiceStore{transport: transport}
-	secret, err := store.Secret(credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)})
+	secret, err := store.Secret(context.Background(), credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}, credentialReadOptions{AllowInteraction: true})
 	if err != nil {
 		t.Fatalf("Secret() error = %v", err)
 	}
@@ -325,7 +326,7 @@ func TestSecretServiceSecretCompletesUnlockPrompt(t *testing.T) {
 	transport.addCall(sessionPath, secretServiceSessionInterface+".Close", successfulSecretServiceCall())
 
 	store := &secretServiceStore{transport: transport}
-	secret, err := store.Secret(credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)})
+	secret, err := store.Secret(context.Background(), credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}, credentialReadOptions{AllowInteraction: true})
 	if err != nil {
 		t.Fatalf("Secret() error = %v", err)
 	}
@@ -346,7 +347,7 @@ func TestSecretServicePromptDismissalIsVisible(t *testing.T) {
 	transport.dismissed = true
 
 	store := &secretServiceStore{transport: transport}
-	_, err := store.Secret(credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)})
+	_, err := store.Secret(context.Background(), credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}, credentialReadOptions{AllowInteraction: true})
 	var dismissed *secretServicePromptDismissedError
 	if !errors.As(err, &dismissed) {
 		t.Fatalf("Secret() error = %v, want prompt dismissal error", err)
@@ -363,7 +364,7 @@ func TestSecretServiceAccessDenialIsNotUnavailable(t *testing.T) {
 	transport.setPropertyError(itemPath, secretServiceItemInterface+".Locked", denied)
 
 	store := &secretServiceStore{transport: transport}
-	_, err := store.Secret(credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)})
+	_, err := store.Secret(context.Background(), credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}, credentialReadOptions{AllowInteraction: true})
 	if !errors.Is(err, denied) {
 		t.Fatalf("Secret() error = %v, want access denial", err)
 	}
@@ -377,7 +378,7 @@ func TestSecretServiceRejectsMalformedResponses(t *testing.T) {
 		transport := newFakeSecretServiceTransport()
 		transport.setProperty(secretServicePath, secretServiceInterface+".Collections", "not paths")
 		store := &secretServiceStore{transport: transport}
-		if _, err := store.Search(credentialQuery{}); err == nil || !strings.Contains(err.Error(), "expected object paths") {
+		if _, err := store.Search(context.Background(), credentialQuery{AllowInteraction: true}); err == nil || !strings.Contains(err.Error(), "expected object paths") {
 			t.Fatalf("Search() error = %v, want malformed property error", err)
 		}
 	})
@@ -386,7 +387,7 @@ func TestSecretServiceRejectsMalformedResponses(t *testing.T) {
 		transport := newFakeSecretServiceTransport()
 		transport.setProperty(secretServicePath, secretServiceInterface+".Collections", []dbus.ObjectPath{"/"})
 		store := &secretServiceStore{transport: transport}
-		if _, err := store.Search(credentialQuery{}); err == nil || !strings.Contains(err.Error(), "collection path") {
+		if _, err := store.Search(context.Background(), credentialQuery{AllowInteraction: true}); err == nil || !strings.Contains(err.Error(), "collection path") {
 			t.Fatalf("Search() error = %v, want malformed object path error", err)
 		}
 	})
@@ -404,7 +405,7 @@ func TestSecretServiceRejectsMalformedResponses(t *testing.T) {
 			successfulSecretServiceCall(),
 		)
 		store := &secretServiceStore{transport: transport}
-		if _, err := store.Secret(credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}); err == nil || !strings.Contains(err.Error(), "plain session output") {
+		if _, err := store.Secret(context.Background(), credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}, credentialReadOptions{AllowInteraction: true}); err == nil || !strings.Contains(err.Error(), "plain session output") {
 			t.Fatalf("Secret() error = %v, want malformed session error", err)
 		}
 		if got := transport.callLog[len(transport.callLog)-1].method; got != secretServiceSessionInterface+".Close" {
@@ -423,7 +424,7 @@ func TestSecretServiceRejectsMalformedResponses(t *testing.T) {
 		))
 		transport.addCall(sessionPath, secretServiceSessionInterface+".Close", successfulSecretServiceCall())
 		store := &secretServiceStore{transport: transport}
-		if _, err := store.Secret(credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}); err == nil || !strings.Contains(err.Error(), "plain session output") {
+		if _, err := store.Secret(context.Background(), credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}, credentialReadOptions{AllowInteraction: true}); err == nil || !strings.Contains(err.Error(), "plain session output") {
 			t.Fatalf("Secret() error = %v, want malformed session error", err)
 		}
 		if got := string(output); got != strings.Repeat("\x00", len(output)) {
@@ -447,7 +448,7 @@ func TestSecretServiceRejectsMalformedResponses(t *testing.T) {
 		))
 		transport.addCall(sessionPath, secretServiceSessionInterface+".Close", successfulSecretServiceCall())
 		store := &secretServiceStore{transport: transport}
-		if _, err := store.Secret(credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}); err == nil || !strings.Contains(err.Error(), "does not match") {
+		if _, err := store.Secret(context.Background(), credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}, credentialReadOptions{AllowInteraction: true}); err == nil || !strings.Contains(err.Error(), "does not match") {
 			t.Fatalf("Secret() error = %v, want malformed secret error", err)
 		}
 	})
@@ -465,7 +466,7 @@ func TestSecretServiceRejectsMalformedResponses(t *testing.T) {
 		))
 		transport.addCall(sessionPath, secretServiceSessionInterface+".Close", successfulSecretServiceCall())
 		store := &secretServiceStore{transport: transport}
-		if _, err := store.Secret(credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}); err == nil || !strings.Contains(err.Error(), "returned parameters") {
+		if _, err := store.Secret(context.Background(), credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}, credentialReadOptions{AllowInteraction: true}); err == nil || !strings.Contains(err.Error(), "returned parameters") {
 			t.Fatalf("Secret() error = %v, want malformed parameters error", err)
 		}
 	})
@@ -480,7 +481,7 @@ func TestSecretServiceRejectsMalformedResponses(t *testing.T) {
 		))
 		transport.prompt = dbus.MakeVariant("not paths")
 		store := &secretServiceStore{transport: transport}
-		if _, err := store.Secret(credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}); err == nil || !strings.Contains(err.Error(), "prompt result") {
+		if _, err := store.Secret(context.Background(), credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}, credentialReadOptions{AllowInteraction: true}); err == nil || !strings.Contains(err.Error(), "prompt result") {
 			t.Fatalf("Secret() error = %v, want malformed prompt error", err)
 		}
 	})
@@ -527,7 +528,7 @@ func TestSecretServiceRejectsNilProviderCalls(t *testing.T) {
 		transport.setProperty(itemPath, secretServiceItemInterface+".Locked", false)
 		transport.calls[secretServiceCallKey{secretServicePath, secretServiceInterface + ".OpenSession"}] = []*dbus.Call{nil}
 		store := &secretServiceStore{transport: transport}
-		if _, err := store.Secret(credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}); err == nil || !strings.Contains(err.Error(), "nil OpenSession") {
+		if _, err := store.Secret(context.Background(), credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}, credentialReadOptions{AllowInteraction: true}); err == nil || !strings.Contains(err.Error(), "nil OpenSession") {
 			t.Fatalf("Secret() error = %v, want nil call error", err)
 		}
 	})
@@ -541,7 +542,7 @@ func TestSecretServiceRejectsNilProviderCalls(t *testing.T) {
 		transport.calls[secretServiceCallKey{itemPath, secretServiceItemInterface + ".GetSecret"}] = []*dbus.Call{nil}
 		transport.addCall(sessionPath, secretServiceSessionInterface+".Close", successfulSecretServiceCall())
 		store := &secretServiceStore{transport: transport}
-		if _, err := store.Secret(credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}); err == nil || !strings.Contains(err.Error(), "nil GetSecret") {
+		if _, err := store.Secret(context.Background(), credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}, credentialReadOptions{AllowInteraction: true}); err == nil || !strings.Contains(err.Error(), "nil GetSecret") {
 			t.Fatalf("Secret() error = %v, want nil call error", err)
 		}
 	})
@@ -552,7 +553,7 @@ func TestSecretServiceRejectsNilProviderCalls(t *testing.T) {
 		transport.setProperty(itemPath, secretServiceItemInterface+".Locked", true)
 		transport.calls[secretServiceCallKey{secretServicePath, secretServiceInterface + ".Unlock"}] = []*dbus.Call{nil}
 		store := &secretServiceStore{transport: transport}
-		if _, err := store.Secret(credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}); err == nil || !strings.Contains(err.Error(), "nil Unlock") {
+		if _, err := store.Secret(context.Background(), credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}, credentialReadOptions{AllowInteraction: true}); err == nil || !strings.Contains(err.Error(), "nil Unlock") {
 			t.Fatalf("Secret() error = %v, want nil call error", err)
 		}
 	})
@@ -560,10 +561,10 @@ func TestSecretServiceRejectsNilProviderCalls(t *testing.T) {
 
 func TestSecretServiceRejectsInvalidCredentialReferences(t *testing.T) {
 	store := &secretServiceStore{transport: newFakeSecretServiceTransport()}
-	if _, err := store.Secret(credentialRef{Backend: credentialBackendGopass, ID: "entry"}); err == nil || !strings.Contains(err.Error(), "backend") {
+	if _, err := store.Secret(context.Background(), credentialRef{Backend: credentialBackendGopass, ID: "entry"}, credentialReadOptions{AllowInteraction: true}); err == nil || !strings.Contains(err.Error(), "backend") {
 		t.Fatalf("Secret() error = %v, want backend mismatch", err)
 	}
-	if _, err := store.Secret(credentialRef{Backend: credentialBackendSecretService, ID: "/"}); err == nil || !strings.Contains(err.Error(), "item path") {
+	if _, err := store.Secret(context.Background(), credentialRef{Backend: credentialBackendSecretService, ID: "/"}, credentialReadOptions{AllowInteraction: true}); err == nil || !strings.Contains(err.Error(), "item path") {
 		t.Fatalf("Secret() error = %v, want invalid item path", err)
 	}
 }
@@ -602,7 +603,7 @@ func TestSecretServiceUnlockFailuresRemainVisible(t *testing.T) {
 		transport.addCall(secretServicePath, secretServiceInterface+".Unlock", successfulSecretServiceCall([]dbus.ObjectPath{}, promptPath))
 		transport.promptErr = providerErr
 		store := &secretServiceStore{transport: transport}
-		_, err := store.Secret(credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)})
+		_, err := store.Secret(context.Background(), credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}, credentialReadOptions{AllowInteraction: true})
 		if !errors.Is(err, providerErr) || isCredentialBackendUnavailable(err) {
 			t.Fatalf("Secret() error = %v, want provider error", err)
 		}
@@ -613,7 +614,7 @@ func TestSecretServiceUnlockFailuresRemainVisible(t *testing.T) {
 		transport.setProperty(itemPath, secretServiceItemInterface+".Locked", true, true)
 		transport.addCall(secretServicePath, secretServiceInterface+".Unlock", successfulSecretServiceCall([]dbus.ObjectPath{itemPath}, secretServiceNoPromptPath))
 		store := &secretServiceStore{transport: transport}
-		_, err := store.Secret(credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)})
+		_, err := store.Secret(context.Background(), credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}, credentialReadOptions{AllowInteraction: true})
 		if err == nil || !strings.Contains(err.Error(), "remains locked") {
 			t.Fatalf("Secret() error = %v, want remains-locked error", err)
 		}
@@ -624,7 +625,7 @@ func TestSecretServiceUnlockFailuresRemainVisible(t *testing.T) {
 		transport.setProperty(itemPath, secretServiceItemInterface+".Locked", true)
 		transport.addCall(secretServicePath, secretServiceInterface+".Unlock", successfulSecretServiceCall([]dbus.ObjectPath{"invalid"}, secretServiceNoPromptPath))
 		store := &secretServiceStore{transport: transport}
-		_, err := store.Secret(credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)})
+		_, err := store.Secret(context.Background(), credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}, credentialReadOptions{AllowInteraction: true})
 		if err == nil || !strings.Contains(err.Error(), "unlock path") {
 			t.Fatalf("Secret() error = %v, want malformed unlock path error", err)
 		}
@@ -757,7 +758,7 @@ func TestSecretServiceSecretPreservesOperationAndCleanupErrors(t *testing.T) {
 	transport.addCall(sessionPath, secretServiceSessionInterface+".Close", &dbus.Call{Err: cleanupErr})
 
 	store := &secretServiceStore{transport: transport}
-	_, err := store.Secret(credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)})
+	_, err := store.Secret(context.Background(), credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}, credentialReadOptions{AllowInteraction: true})
 	if !errors.Is(err, operationErr) || !errors.Is(err, cleanupErr) {
 		t.Fatalf("Secret() error = %v, want operation and cleanup errors", err)
 	}
@@ -778,7 +779,7 @@ func TestSecretServiceSecretClearsResultWhenSessionCleanupFails(t *testing.T) {
 	transport.addCall(sessionPath, secretServiceSessionInterface+".Close", &dbus.Call{Err: cleanupErr})
 
 	store := &secretServiceStore{transport: transport}
-	secret, err := store.Secret(credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)})
+	secret, err := store.Secret(context.Background(), credentialRef{Backend: credentialBackendSecretService, ID: string(itemPath)}, credentialReadOptions{AllowInteraction: true})
 	if !errors.Is(err, cleanupErr) {
 		t.Fatalf("Secret() error = %v, want cleanup error", err)
 	}
@@ -786,3 +787,10 @@ func TestSecretServiceSecretClearsResultWhenSessionCleanupFails(t *testing.T) {
 		t.Fatalf("Secret() returned bytes with a cleanup error: %q", secret)
 	}
 }
+
+func (f *fakeSecretServiceTransport) WithContext(context.Context) secretServiceTransport { return f }
+
+func (f *fakeSecretServiceTransport) Owner(ctx context.Context) (string, error) {
+	return ":1.42", ctx.Err()
+}
+func (f *fakeSecretServiceTransport) WithOwner(string) secretServiceTransport { return f }

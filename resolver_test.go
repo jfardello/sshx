@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"reflect"
 	"strings"
@@ -219,7 +220,7 @@ func TestAutoUsesSecretServiceForSSHOnLinux(t *testing.T) {
 	err := executeSSH([]string{"production", "uptime"}, dependencies{
 		goos:        "linux",
 		gopassStore: gopass,
-		secretServiceStore: func() (credentialStore, error) {
+		secretServiceStore: func(context.Context) (credentialStore, error) {
 			providerCalls++
 			return secretService, nil
 		},
@@ -251,7 +252,7 @@ func TestSecretCollectionScopesLookup(t *testing.T) {
 		[]string{"server.example", "--secret-collection", "Work", "--credential-backend", "secret-service"},
 		dependencies{
 			goos: "linux",
-			secretServiceStore: func() (credentialStore, error) {
+			secretServiceStore: func(context.Context) (credentialStore, error) {
 				return secretService, nil
 			},
 			runProgram: (&recordingRunner{}).run,
@@ -272,7 +273,7 @@ func TestAutoFallsBackToGopassOnlyWhenSecretServiceIsUnavailable(t *testing.T) {
 	err := executeSSH([]string{"alice@example.com"}, dependencies{
 		goos:        "linux",
 		gopassStore: gopass,
-		secretServiceStore: func() (credentialStore, error) {
+		secretServiceStore: func(context.Context) (credentialStore, error) {
 			return nil, newCredentialBackendUnavailableError(credentialBackendSecretService, errors.New("no session bus"))
 		},
 		runProgram: runner.run,
@@ -310,7 +311,7 @@ func TestAutoNeverFallsBackAfterSecretServiceWasOpened(t *testing.T) {
 			err := executeSSH([]string{"alice@example.com"}, dependencies{
 				goos:        "linux",
 				gopassStore: gopass,
-				secretServiceStore: func() (credentialStore, error) {
+				secretServiceStore: func(context.Context) (credentialStore, error) {
 					return secretService, nil
 				},
 				runProgram: (&recordingRunner{}).run,
@@ -338,7 +339,7 @@ func TestAutoDoesNotFallBackWhenSecretRetrievalFails(t *testing.T) {
 	err := executeSSH([]string{"server"}, dependencies{
 		goos:        "linux",
 		gopassStore: gopass,
-		secretServiceStore: func() (credentialStore, error) {
+		secretServiceStore: func(context.Context) (credentialStore, error) {
 			return secretService, nil
 		},
 		runProgram: (&recordingRunner{}).run,
@@ -358,7 +359,7 @@ func TestGopassPrefixSkipsSecretService(t *testing.T) {
 	err := executeSSH([]string{"alice@example.com", "--gopass-prefix", "production"}, dependencies{
 		goos:        "linux",
 		gopassStore: gopass,
-		secretServiceStore: func() (credentialStore, error) {
+		secretServiceStore: func(context.Context) (credentialStore, error) {
 			providerCalls++
 			return &recordingStore{}, nil
 		},
@@ -384,7 +385,7 @@ func TestAmbiguousSecretServiceResultsDoNotRetrieveSecret(t *testing.T) {
 	var stdout bytes.Buffer
 	err := executeSSH([]string{"server", "--credential-backend", "secret-service"}, dependencies{
 		goos: "linux",
-		secretServiceStore: func() (credentialStore, error) {
+		secretServiceStore: func(context.Context) (credentialStore, error) {
 			return secretService, nil
 		},
 		runProgram: (&recordingRunner{}).run,
@@ -419,7 +420,7 @@ func TestSecretServiceWorksForSCPUploadAndDownload(t *testing.T) {
 			args = append(args, test.operands...)
 			err := executeSCP(args, dependencies{
 				goos: "linux",
-				secretServiceStore: func() (credentialStore, error) {
+				secretServiceStore: func(context.Context) (credentialStore, error) {
 					return secretService, nil
 				},
 				runProgram: runner.run,

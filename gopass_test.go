@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"reflect"
 	"testing"
 )
@@ -19,7 +20,7 @@ func TestGopassSearchReturnsNeutralCredentialMetadata(t *testing.T) {
 		},
 	}
 
-	credentials, err := store.Search(credentialQuery{
+	credentials, err := store.Search(context.Background(), credentialQuery{AllowInteraction: true,
 		Collection: "infrastructure/production",
 		Text:       "user@example.com",
 	})
@@ -51,7 +52,7 @@ func TestGopassSearchUsesParentPathAsDiscoveryCollection(t *testing.T) {
 		},
 	}
 
-	credentials, err := store.Search(credentialQuery{})
+	credentials, err := store.Search(context.Background(), credentialQuery{AllowInteraction: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,10 +77,10 @@ func TestGopassSecretUsesPasswordOnlyAndClearsCommandOutput(t *testing.T) {
 		},
 	}
 
-	secret, err := store.Secret(credentialRef{
+	secret, err := store.Secret(context.Background(), credentialRef{
 		Backend: credentialBackendGopass,
 		ID:      "servers/user@example.com",
-	})
+	}, credentialReadOptions{AllowInteraction: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +106,7 @@ func TestGopassSecretRejectsForeignCredential(t *testing.T) {
 		},
 	}
 
-	_, err := store.Secret(credentialRef{
+	_, err := store.Secret(context.Background(), credentialRef{
 		Backend: credentialBackendSecretService,
 		ID:      "item",
 	})

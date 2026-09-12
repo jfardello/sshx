@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"time"
 )
 
 type credentialBackend string
@@ -24,17 +26,19 @@ type credentialRef struct {
 }
 
 type credentialQuery struct {
-	Collection string
-	Text       string
+	Collection       string
+	Text             string
+	Attributes       map[string]string
+	AllowInteraction bool
 }
 
 type credentialStore interface {
-	Search(query credentialQuery) ([]credentialRef, error)
-	Secret(credential credentialRef) ([]byte, error)
+	Search(context.Context, credentialQuery) ([]credentialRef, error)
+	Secret(context.Context, credentialRef, ...credentialReadOptions) ([]byte, error)
 	Close() error
 }
 
-type credentialStoreProvider func() (credentialStore, error)
+type credentialStoreProvider func(context.Context) (credentialStore, error)
 
 type selectedCredentialStore struct {
 	backend credentialBackend
@@ -84,7 +88,15 @@ func selectCredentialStore(
 	goos string,
 	gopass credentialStore,
 	secretService credentialStoreProvider,
+	contexts ...context.Context,
 ) (selectedCredentialStore, error) {
+	ctx := context.Background()
+	if len(contexts) > 0 {
+		ctx = contexts[0]
+	}
+	if err := ctx.Err(); err != nil {
+		return selectedCredentialStore{}, err
+	}
 	if backend == "" {
 		backend = credentialBackendAuto
 	}
@@ -94,14 +106,14 @@ func selectCredentialStore(
 		store, err := configuredCredentialStore(credentialBackendGopass, gopass)
 		return selectedCredentialStore{backend: credentialBackendGopass, store: store}, err
 	case credentialBackendSecretService:
-		store, err := openSecretServiceStore(secretService)
+		store, err := openSecretServiceStore(ctx, secretService)
 		return selectedCredentialStore{backend: credentialBackendSecretService, store: store}, err
 	case credentialBackendAuto:
 		if goos != "linux" {
 			store, err := configuredCredentialStore(credentialBackendGopass, gopass)
 			return selectedCredentialStore{backend: credentialBackendGopass, store: store}, err
 		}
-		store, err := openSecretServiceStore(secretService)
+		store, err := openSecretServiceStore(ctx, secretService)
 		if err == nil {
 			return selectedCredentialStore{backend: credentialBackendSecretService, store: store}, nil
 		}
@@ -122,7 +134,7 @@ func configuredCredentialStore(backend credentialBackend, store credentialStore)
 	return store, nil
 }
 
-func openSecretServiceStore(provider credentialStoreProvider) (credentialStore, error) {
+func openSecretServiceStore(ctx context.Context, provider credentialStoreProvider) (credentialStore, error) {
 	if provider == nil {
 		return nil, newCredentialBackendUnavailableError(
 			credentialBackendSecretService,
@@ -130,9 +142,28 @@ func openSecretServiceStore(provider credentialStoreProvider) (credentialStore, 
 		)
 	}
 
-	store, err := provider()
+	store, err := provider(ctx)
 	if err != nil {
 		return nil, err
 	}
 	return configuredCredentialStore(credentialBackendSecretService, store)
 }
+
+// The zero value never authorizes an unlock prompt.
+type credentialReadOptions struct{ AllowInteraction bool }
+type keyMaterialStore interface {
+	KeyMaterial(context.Context, credentialRef) ([]byte, error)
+}
+
+const credentialOperationTimeout = 30 * time.Second
+const credentialCleanupTimeout = 2 * time.Second
+
+var (
+	errCredentialLocked          = errors.New("credential store is locked")
+	errCredentialProviderChanged = errors.New("credential provider changed or disconnected")
+	errCredentialRead            = errors.New("credential operation failed")
+	errCredentialReference       = errors.New("invalid or ambiguous credential reference")
+	errCredentialTooLarge        = errors.New("credential output exceeds size limit")
+	errKeyUnsupported            = errors.New("unsupported or encrypted SSH private key")
+	errKeyMismatch               = errors.New("private key does not match registered public key")
+)

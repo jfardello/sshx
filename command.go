@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -24,6 +25,7 @@ type commandOptions struct {
 }
 
 type dependencies struct {
+	ctx                context.Context
 	gopassStore        credentialStore
 	secretServiceStore credentialStoreProvider
 	goos               string
@@ -71,6 +73,7 @@ Explicit command-line options override file defaults.`,
 			if isHelpRequest(args) {
 				return cmd.Help()
 			}
+			deps.ctx = cmd.Context()
 			return executeSSH(args, deps)
 		},
 	}
@@ -95,6 +98,7 @@ func newSSHCommand(deps dependencies) *cobra.Command {
 			if isHelpRequest(args) {
 				return cmd.Help()
 			}
+			deps.ctx = cmd.Context()
 			return executeSSH(args, deps)
 		},
 	}
@@ -121,6 +125,7 @@ credential. For example, ":/tmp/file" becomes "user@host:/tmp/file".`,
 			if isHelpRequest(args) {
 				return cmd.Help()
 			}
+			deps.ctx = cmd.Context()
 			return executeSCP(args, deps)
 		},
 	}
@@ -151,6 +156,7 @@ func executeSSH(args []string, deps dependencies) (returnErr error) {
 		dependencyGOOS(deps),
 		deps.gopassStore,
 		deps.secretServiceStore,
+		dependencyContext(deps),
 	)
 	if err != nil {
 		return fmt.Errorf("could not select credential backend: %w", err)
@@ -166,7 +172,7 @@ func executeSSH(args []string, deps dependencies) (returnErr error) {
 		return err
 	}
 
-	password, err := selection.store.Secret(credential)
+	password, err := selection.store.Secret(dependencyContext(deps), credential, credentialReadOptions{AllowInteraction: true})
 	if err != nil {
 		return fmt.Errorf("could not retrieve password: %w", err)
 	}
@@ -193,6 +199,7 @@ func executeSCP(args []string, deps dependencies) (returnErr error) {
 		dependencyGOOS(deps),
 		deps.gopassStore,
 		deps.secretServiceStore,
+		dependencyContext(deps),
 	)
 	if err != nil {
 		return fmt.Errorf("could not select credential backend: %w", err)
@@ -228,7 +235,7 @@ func executeSCP(args []string, deps dependencies) (returnErr error) {
 		return fmt.Errorf("remote-to-remote copies are not supported")
 	}
 
-	password, err := selection.store.Secret(credential)
+	password, err := selection.store.Secret(dependencyContext(deps), credential, credentialReadOptions{AllowInteraction: true})
 	if err != nil {
 		return fmt.Errorf("could not retrieve password: %w", err)
 	}
@@ -273,7 +280,7 @@ func resolveCredential(
 	if selection.backend == credentialBackendSecretService {
 		collection = opts.secretCollection
 	}
-	credentials, err := selection.store.Search(credentialQuery{
+	credentials, err := selection.store.Search(dependencyContext(deps), credentialQuery{AllowInteraction: true,
 		Collection: collection,
 		Text:       opts.target,
 	})
@@ -486,4 +493,11 @@ func clearBytes(value []byte) {
 	for i := range value {
 		value[i] = 0
 	}
+}
+
+func dependencyContext(deps dependencies) context.Context {
+	if deps.ctx != nil {
+		return deps.ctx
+	}
+	return context.Background()
 }

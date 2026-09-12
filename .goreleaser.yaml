@@ -36,6 +36,7 @@ archives:
     files:
       - README.md
       - docs/secret-service-smoke-tests.md
+      - docs/ssh-key-registry.md
 
 checksum:
   name_template: checksums.txt

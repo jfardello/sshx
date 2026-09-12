@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -301,8 +302,11 @@ func TestCredentialListOverrides(t *testing.T) {
 func TestConfigErrorsPrecedeBackendAccessAndHelpSkipsConfig(t *testing.T) {
 	for _, args := range [][]string{{"host"}, {"ssh", "host"}, {"scp", "host", "local", ":/remote"}, {"credentials", "list"}} {
 		cmd := newRootCommandWithDependencies(dependencies{
-			loadConfig:         func() (optionOverrides, error) { return optionOverrides{}, errors.New("unreadable config") },
-			secretServiceStore: func() (credentialStore, error) { t.Fatal("backend opened on invalid config"); return nil, nil },
+			loadConfig: func() (optionOverrides, error) { return optionOverrides{}, errors.New("unreadable config") },
+			secretServiceStore: func(context.Context) (credentialStore, error) {
+				t.Fatal("backend opened on invalid config")
+				return nil, nil
+			},
 		})
 		cmd.SetArgs(args)
 		if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "unreadable config") {
