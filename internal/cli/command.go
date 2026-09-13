@@ -84,7 +84,7 @@ Explicit command-line options override file defaults.`,
 	// Parsing is manual so options not owned by sshx pass through to
 	// OpenSSH unchanged.
 	addPassthroughFlag(cmd, "SSH")
-	cmd.AddCommand(newSSHCommand(deps), newSCPCommand(deps), newCredentialsCommand(deps))
+	cmd.AddCommand(newSSHCommand(deps), newSCPCommand(deps), newCredentialsCommand(deps), newAgentCommand(deps))
 	return cmd
 }
 

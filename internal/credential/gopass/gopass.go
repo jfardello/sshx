@@ -260,7 +260,7 @@ func gopassKeyEnvironment(inherited []string) []string {
 		if strings.HasPrefix(name, "GOPASS_") && name != "GOPASS_CONFIG" && name != "GOPASS_HOMEDIR" {
 			continue
 		}
-		if name == "PASSWORD_STORE_GPG_OPTS" || name == "GPG_TTY" {
+		if name == "PASSWORD_STORE_GPG_OPTS" || name == "GPG_TTY" || name == "SSH_AUTH_SOCK" || name == "SSH_AGENT_PID" || name == "LISTEN_FDS" || name == "LISTEN_PID" || name == "LISTEN_FDNAMES" {
 			continue
 		}
 		env = append(env, value)

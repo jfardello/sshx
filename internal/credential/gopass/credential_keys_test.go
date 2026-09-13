@@ -75,6 +75,13 @@ func TestGopassKeyMaterialRawAndSanitized(t *testing.T) {
 	}
 }
 func TestGopassKeyEnvironment(t *testing.T) {
+	for _, name := range []string{"SSH_AUTH_SOCK", "SSH_AGENT_PID", "LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES"} {
+		for _, value := range gopassKeyEnvironment([]string{name + "=must-not-inherit"}) {
+			if strings.HasPrefix(value, name+"=") {
+				t.Fatalf("helper inherited %s", name)
+			}
+		}
+	}
 	env := gopassKeyEnvironment([]string{"PATH=/bin", "GOPASS_CONFIG=/owned/config", "GOPASS_HOMEDIR=/owned/home", "GOPASS_DEBUG=1", "GOPASS_DEBUG_LOG_SECRETS=true", "GOPASS_MEM_PROFILE=/tmp/leak", "GOPASS_GPG_OPTS=--pinentry-mode ask", "PASSWORD_STORE_GPG_OPTS=--pinentry-mode ask", "GPG_TTY=/dev/tty", "GOPASS_AGE_PASSWORD=private"})
 	joined := strings.Join(env, "\n")
 	for _, bad := range []string{"private", "--pinentry-mode ask", "GOPASS_DEBUG", "GOPASS_MEM_PROFILE", "GPG_TTY="} {

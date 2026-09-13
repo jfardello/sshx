@@ -9,14 +9,19 @@ import (
 	"syscall"
 
 	"github.com/jfardello/sshx/internal/cli"
-	"github.com/jfardello/sshx/internal/pty"
 )
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	ctx := context.Background()
+	// Agent commands own signal handling so run can forward the actual signal
+	// and preserve the child's status. Password commands retain cancellation.
+	if len(os.Args) < 2 || os.Args[1] != "agent" {
+		var stop context.CancelFunc
+		ctx, stop = signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+		defer stop()
+	}
 	if err := cli.NewRootCommand().ExecuteContext(ctx); err != nil {
-		var exitErr *pty.ExitCodeError
+		var exitErr interface{ Code() int }
 		if errors.As(err, &exitErr) {
 			os.Exit(exitErr.Code())
 		}
