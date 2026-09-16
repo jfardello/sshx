@@ -75,7 +75,7 @@ func TestGopassKeyMaterialRawAndSanitized(t *testing.T) {
 	}
 }
 func TestGopassKeyEnvironment(t *testing.T) {
-	for _, name := range []string{"SSH_AUTH_SOCK", "SSH_AGENT_PID", "LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES"} {
+	for _, name := range []string{"SSH_AUTH_SOCK", "SSH_AGENT_PID", "LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES", "LISTEN_PIDFDID"} {
 		for _, value := range gopassKeyEnvironment([]string{name + "=must-not-inherit"}) {
 			if strings.HasPrefix(value, name+"=") {
 				t.Fatalf("helper inherited %s", name)

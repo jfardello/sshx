@@ -33,6 +33,7 @@ type dependencies struct {
 	runProgram         func(program string, args []string, password []byte) error
 	stdout             io.Writer
 	stderr             io.Writer
+	systemctl          func(context.Context, ...string) ([]byte, error)
 }
 
 func newRootCommand() *cobra.Command {

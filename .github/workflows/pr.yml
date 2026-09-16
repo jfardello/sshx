@@ -122,6 +122,12 @@ jobs:
         working-directory: candidate
         run: go test -race ./...
 
+      - name: Verify systemd units and first-connection activation
+        working-directory: candidate
+        run: >-
+          env SSHX_SYSTEMD_INTEGRATION=1
+          go test -race -v -run '^TestAgentSystemdIntegration$' -count=1 ./internal/cli
+
       - name: Run go vet
         working-directory: candidate
         run: go vet ./...

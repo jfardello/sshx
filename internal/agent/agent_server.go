@@ -35,14 +35,14 @@ type agentServer struct {
 	closeOnce    sync.Once
 	closeErr     error
 	directoryFD  int
+	ownsSocket   bool
 	socketName   string
 	socketStat   unix.Stat_t
 	readTimeout  time.Duration
 	writeTimeout time.Duration
 }
 
-// The caller provides an existing private runtime directory. CLI defaults,
-// directory creation, environment output and service activation are later work.
+// The caller provides an existing private runtime directory.
 func newAgentServer(socketPath string, registry *agentRegistry, opener agentStoreOpener) (*agentServer, error) {
 	keys, err := newAgentKeyService(registry, opener)
 	if err != nil {
@@ -66,7 +66,7 @@ func newAgentServer(socketPath string, registry *agentRegistry, opener agentStor
 	// Never let net.UnixListener unlink a replacement endpoint by pathname.
 	listener.SetUnlinkOnClose(false)
 	ctx, cancel := context.WithCancel(context.Background())
-	server := &agentServer{listener: listener, keys: keys, ctx: ctx, cancel: cancel, connections: make(map[*net.UnixConn]struct{}), directoryFD: fd, socketName: name, readTimeout: 30 * time.Second, writeTimeout: 5 * time.Second}
+	server := &agentServer{listener: listener, keys: keys, ctx: ctx, cancel: cancel, connections: make(map[*net.UnixConn]struct{}), directoryFD: fd, ownsSocket: true, socketName: name, readTimeout: 30 * time.Second, writeTimeout: 5 * time.Second}
 	if unix.Fstatat(fd, name, &server.socketStat, unix.AT_SYMLINK_NOFOLLOW) != nil || server.socketStat.Mode&unix.S_IFMT != unix.S_IFSOCK || server.socketStat.Uid != uint32(os.Geteuid()) {
 		_ = server.Close()
 		return nil, errAgentSocket
@@ -222,10 +222,12 @@ func (s *agentServer) Close() error {
 		}
 		s.mutex.Unlock()
 		s.workers.Wait()
-		var current unix.Stat_t
-		if err := unix.Fstatat(s.directoryFD, s.socketName, &current, unix.AT_SYMLINK_NOFOLLOW); err == nil && sameAgentSocket(s.socketStat, current) {
-			if err := unix.Unlinkat(s.directoryFD, s.socketName, 0); err != nil {
-				s.closeErr = errAgentSocket
+		if s.ownsSocket {
+			var current unix.Stat_t
+			if err := unix.Fstatat(s.directoryFD, s.socketName, &current, unix.AT_SYMLINK_NOFOLLOW); err == nil && sameAgentSocket(s.socketStat, current) {
+				if err := unix.Unlinkat(s.directoryFD, s.socketName, 0); err != nil {
+					s.closeErr = errAgentSocket
+				}
 			}
 		}
 		if err := unix.Close(s.directoryFD); err != nil {

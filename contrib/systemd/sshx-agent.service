@@ -1,0 +1,12 @@
+[Unit]
+Description=sshx SSH agent
+Requires=sshx-agent.socket
+After=sshx-agent.socket
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/sshx agent start --foreground --socket-activation
+UMask=0077
+NoNewPrivileges=yes
+LimitCORE=0
+TimeoutStopSec=10s

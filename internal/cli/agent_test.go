@@ -376,7 +376,7 @@ func TestAgentRunStartupFailureCleanup(t *testing.T) {
 }
 
 func TestAgentManagedEnvironment(t *testing.T) {
-	got := managedAgentEnvironment([]string{"SSH_AUTH_SOCK=foreign", "SSH_AUTH_SOCK=duplicate", "SSH_AGENT_PID=1", "LISTEN_PID=2", "LISTEN_FDS=3", "LISTEN_FDNAMES=agent", "PATH=/bin", "HOME=/owned"}, "/private/socket")
+	got := managedAgentEnvironment([]string{"SSH_AUTH_SOCK=foreign", "SSH_AUTH_SOCK=duplicate", "SSH_AGENT_PID=1", "LISTEN_PID=2", "LISTEN_FDS=3", "LISTEN_FDNAMES=agent", "LISTEN_PIDFDID=123", "PATH=/bin", "HOME=/owned"}, "/private/socket")
 	want := []string{"PATH=/bin", "HOME=/owned", "SSH_AUTH_SOCK=/private/socket"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatal(got)

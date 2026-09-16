@@ -23,21 +23,29 @@ func newAgentCommand(deps dependencies) *cobra.Command {
 	root.SetOut(deps.stdout)
 	root.SetErr(deps.stderr)
 	var startSocket, envSocket, statusSocket, shell string
-	var foreground bool
+	var foreground, activation, envSystemd, statusSystemd, stopSystemd bool
+	manager := newAgentManager(deps)
 	start := &cobra.Command{Use: "start --foreground", Short: "Serve until interrupted", Args: cobra.NoArgs}
 	start.Flags().BoolVar(&foreground, "foreground", false, "serve in the foreground (required)")
 	start.Flags().StringVar(&startSocket, "socket", "", "socket in an existing private directory")
+	start.Flags().BoolVar(&activation, "socket-activation", false, "consume a systemd listening descriptor (Linux)")
 	start.RunE = func(cmd *cobra.Command, _ []string) error {
 		if !foreground {
-			return errors.New("agent start requires --foreground; background service management is not available")
+			return errors.New("agent start requires --foreground; start managed activation with systemctl --user start sshx-agent.socket")
 		}
 		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 		defer stop()
-		name, err := agentSocketPath(startSocket, true)
+		var name string
+		var err error
+		if activation {
+			name, err = systemdAgentSocket(startSocket)
+		} else {
+			name, err = agentSocketPath(startSocket, true)
+		}
 		if err != nil {
 			return err
 		}
-		server, err := startAgent(ctx, name)
+		server, err := startAgentMode(ctx, name, activation)
 		if err != nil {
 			return err
 		}
@@ -49,11 +57,18 @@ func newAgentCommand(deps dependencies) *cobra.Command {
 	env := &cobra.Command{Use: "env", Short: "Print shell assignments for an existing agent", Args: cobra.NoArgs}
 	env.Flags().StringVar(&shell, "shell", "sh", "assignment syntax: sh or zsh")
 	env.Flags().StringVar(&envSocket, "socket", "", "existing agent socket")
+	env.Flags().BoolVar(&envSystemd, "systemd", false, "use the systemd socket, activating the service if necessary")
 	env.RunE = func(cmd *cobra.Command, _ []string) error {
 		if shell != "sh" && shell != "zsh" {
 			return fmt.Errorf("unsupported shell %q (expected sh or zsh)", shell)
 		}
-		name, err := agentSocketPath(envSocket, false)
+		var name string
+		var err error
+		if envSystemd {
+			name, err = systemdAgentSocket(envSocket)
+		} else {
+			name, err = agentSocketPath(envSocket, false)
+		}
 		if err != nil {
 			return err
 		}
@@ -65,7 +80,12 @@ func newAgentCommand(deps dependencies) *cobra.Command {
 	}
 	status := &cobra.Command{Use: "status", Short: "Check the socket without reading private keys", Args: cobra.NoArgs}
 	status.Flags().StringVar(&statusSocket, "socket", "", "existing agent socket")
+	status.Flags().BoolVar(&statusSystemd, "systemd", false, "inspect socket and service units without activating them")
+	status.MarkFlagsMutuallyExclusive("socket", "systemd")
 	status.RunE = func(cmd *cobra.Command, _ []string) error {
+		if statusSystemd {
+			return manager.status(cmd.Context(), cmd.OutOrStdout())
+		}
 		name, err := agentSocketPath(statusSocket, false)
 		if err == nil {
 			err = agent.Probe(cmd.Context(), name)
@@ -83,10 +103,14 @@ func newAgentCommand(deps dependencies) *cobra.Command {
 		}
 		return runWithAgent(cmd.Context(), args, os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr())
 	}
-	stop := &cobra.Command{Use: "stop", Short: "Explain foreground shutdown", Args: cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error {
-			return errors.New("stop a foreground agent with Ctrl-C or a signal from its supervisor; authenticated service control is not available")
+	stop := &cobra.Command{Use: "stop", Short: "Stop the systemd socket and service, or explain foreground shutdown", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if stopSystemd {
+				return manager.stop(cmd.Context())
+			}
+			return errors.New("stop a foreground agent with Ctrl-C; use agent stop --systemd for the systemd user units")
 		}}
+	stop.Flags().BoolVar(&stopSystemd, "systemd", false, "stop the user socket before stopping its service")
 	root.AddCommand(start, env, status, run, stop)
 	return root
 }
@@ -137,12 +161,19 @@ func agentSocketPath(explicit string, create bool) (string, error) {
 }
 
 func startAgent(ctx context.Context, socket string) (*agent.Server, error) {
+	return startAgentMode(ctx, socket, false)
+}
+
+func startAgentMode(ctx context.Context, socket string, activation bool) (*agent.Server, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	registry, err := agent.LoadRegistry()
 	if err != nil {
 		return nil, err
+	}
+	if activation {
+		return agent.NewActivatedServer(socket, registry, keystore.Open)
 	}
 	return agent.NewServer(socket, registry, keystore.Open)
 }
@@ -152,7 +183,7 @@ func managedAgentEnvironment(inherited []string, socket string) []string {
 	for _, value := range inherited {
 		name, _, _ := strings.Cut(value, "=")
 		switch name {
-		case "SSH_AUTH_SOCK", "SSH_AGENT_PID", "LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES":
+		case "SSH_AUTH_SOCK", "SSH_AGENT_PID", "LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES", "LISTEN_PIDFDID":
 			continue
 		}
 		env = append(env, value)
