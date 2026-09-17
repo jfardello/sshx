@@ -368,8 +368,8 @@ func TestAgentForwardingDenialIsConnectionLocal(t *testing.T) {
 		}
 	}
 	clean := &agentConnection{ctx: context.Background(), keys: s}
-	if reply, err := dispatchAgentFrame(clean, testAgentBind(t, 0)); err != nil || reply[4] != 5 || clean.denied {
-		t.Fatal("direct unverified bind must remain unsupported", err)
+	if reply, err := dispatchAgentFrame(clean, testAgentBind(t, 0)); err != nil || reply[4] != 6 || clean.denied {
+		t.Fatal("verified direct bind must succeed", err)
 	}
 	if keys, err := clean.List(); err != nil || len(keys) != 1 {
 		t.Fatal("one connection poisoned another")

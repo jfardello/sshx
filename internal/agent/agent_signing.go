@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"sync"
+
 	"github.com/jfardello/sshx/internal/credential"
 	"golang.org/x/crypto/ssh"
 )
@@ -25,10 +27,31 @@ var (
 type agentStoreOpener func(context.Context, credentialBackend) (credential.KeyStore, error)
 
 type agentKeyService struct {
-	registry *agentRegistry
-	byBlob   map[string]registeredAgentKey
-	open     agentStoreOpener
-	jobs     chan struct{}
+	registry       *agentRegistry
+	byBlob         map[string]registeredAgentKey
+	open           agentStoreOpener
+	jobs           chan struct{}
+	stateMutex     sync.RWMutex
+	locked         bool
+	lockGeneration uint64
+}
+
+// The lifecycle lock gate is separate from connection provenance. Public lock
+// commands/password handling remain deferred; future management must use this
+// transition rather than replacing connection adapters or their bindings.
+func (s *agentKeyService) setLocked(locked bool) {
+	s.stateMutex.Lock()
+	defer s.stateMutex.Unlock()
+	if s.locked != locked {
+		s.locked = locked
+		s.lockGeneration++
+	}
+}
+
+func (s *agentKeyService) signingState() (uint64, bool) {
+	s.stateMutex.RLock()
+	defer s.stateMutex.RUnlock()
+	return s.lockGeneration, s.locked
 }
 
 func newAgentKeyService(registry *agentRegistry, opener agentStoreOpener) (*agentKeyService, error) {
@@ -67,6 +90,10 @@ func newAgentKeyService(registry *agentRegistry, opener agentStoreOpener) (*agen
 	return service, nil
 }
 func (s *agentKeyService) sign(ctx context.Context, blob, data []byte, algorithm string) (signature *ssh.Signature, returnErr error) {
+	generation, locked := s.signingState()
+	if locked {
+		return nil, errAgentDenied
+	}
 	key, ok := s.byBlob[string(blob)]
 	if !ok || len(data) > maxAgentFrameBytes || !agentAlgorithmAllowed(key.publicKey.Type(), algorithm) {
 		return nil, errAgentDenied
@@ -84,7 +111,8 @@ func (s *agentKeyService) sign(ctx context.Context, blob, data []byte, algorithm
 	defer cancel()
 	// Only fixed error messages cross into upstream protocol logging.
 	defer func() {
-		if returnErr != nil || ctx.Err() != nil {
+		current, locked := s.signingState()
+		if returnErr != nil || ctx.Err() != nil || locked || current != generation {
 			if signature != nil {
 				clearBytes(signature.Blob)
 			}

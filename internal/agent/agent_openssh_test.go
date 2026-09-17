@@ -34,6 +34,11 @@ func TestAgentOpenSSHIntegration(t *testing.T) {
 			t.Fatal("required OpenSSH client unavailable", tool)
 		}
 	}
+	version, err := exec.Command("ssh", "-V").CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log(strings.TrimSpace(string(version)))
 	_, ed, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -76,6 +81,8 @@ func TestAgentOpenSSHIntegration(t *testing.T) {
 			}
 			defer server.Close()
 			go server.Serve(context.Background())
+			proxy := startBindingProxy(t, socketPath)
+			socketPath = proxy.path
 			publicPath := filepath.Join(dir, "identity.pub")
 			if err := os.WriteFile(publicPath, ssh.MarshalAuthorizedKey(pub), 0600); err != nil {
 				t.Fatal(err)
@@ -124,13 +131,38 @@ func TestAgentOpenSSHIntegration(t *testing.T) {
 			if err := os.WriteFile(knownPath, append([]byte("["+host+"]:"+port+" "), ssh.MarshalAuthorizedKey(hostKey)...), 0600); err != nil {
 				t.Fatal(err)
 			}
-			args := []string{"-F", "/dev/null", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=" + socketPath, "-o", "IdentityFile=" + publicPath, "-o", "UserKnownHostsFile=" + knownPath, "-o", "GlobalKnownHostsFile=/dev/null", "-o", "StrictHostKeyChecking=yes", "-o", "PreferredAuthentications=publickey", "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no", "-o", "ForwardAgent=no", "-o", "PubkeyAcceptedAlgorithms=" + fixture.algorithm, "-p", port, "sshx-fixture@" + host, "fixture-command"}
+			args := []string{"-F", "/dev/null", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=" + socketPath, "-o", "IdentityFile=" + publicPath, "-o", "UserKnownHostsFile=" + knownPath, "-o", "GlobalKnownHostsFile=/dev/null", "-o", "StrictHostKeyChecking=yes", "-o", "PreferredAuthentications=publickey", "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no", "-o", "ForwardAgent=no", "-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "PubkeyAcceptedAlgorithms=" + fixture.algorithm, "-p", port, "sshx-fixture@" + host, "fixture-command"}
 			output, err := run("ssh", args...)
 			if err != nil || string(output) != "agent-authenticated\n" {
 				t.Fatal("OpenSSH agent authentication", err)
 			}
 			if backend.reads.Load() != 1 {
 				t.Fatalf("private reads = %d; expected agent-only authentication", backend.reads.Load())
+			}
+			proxy.mutex.Lock()
+			verified := proxy.verified > 0 && proxy.host != nil && bytes.Equal(proxy.host.Marshal(), hostKey.Marshal()) && proxy.signedSession
+			proxy.mutex.Unlock()
+			if !verified {
+				t.Fatal("real OpenSSH authentication did not use a verified binding for the fixture host/session")
+			}
+			for _, negative := range []string{"corrupt", "forwarding"} {
+				proxy.corrupt.Store(negative == "corrupt")
+				proxy.forward.Store(negative == "forwarding")
+				before := backend.reads.Load()
+				if _, err := run("ssh", args...); err == nil {
+					t.Fatal("invalid/forwarded proof authenticated", negative)
+				}
+				if backend.reads.Load() != before {
+					t.Fatal("denied binding accessed backend", negative)
+				}
+			}
+			proxy.corrupt.Store(false)
+			proxy.forward.Store(false)
+			proxy.mutex.Lock()
+			failed := proxy.failures
+			proxy.mutex.Unlock()
+			if failed < 2 {
+				t.Fatal("negative OpenSSH cases did not receive extension failure")
 			}
 			if fixture.algorithm == ssh.KeyAlgoED25519 {
 				if _, err := run("ssh-add", "-T", publicPath); err != nil {

@@ -257,11 +257,10 @@ func dependencyGOOS(deps dependencies) string {
 	return runtime.GOOS
 }
 
-func resolveCredential(
-	opts commandOptions,
-	selection selectedCredentialStore,
-	deps dependencies,
-) (credentialRef, bool, error) {
+// resolveCredential resolves an explicit gopass path or searches the chosen store.
+// It returns a reference without reading its password; ambiguous matches are
+// printed for the user to refine the target, with selected=false and no error.
+func resolveCredential(opts commandOptions, selection selectedCredentialStore, deps dependencies) (credentialRef, bool, error) {
 	if selection.backend == credentialBackendGopass && strings.Contains(opts.target, "/") {
 		targetPath, err := normalizeGopassEntryPath(opts.target)
 		if err != nil {

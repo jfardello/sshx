@@ -22,9 +22,10 @@ const (
 // One adapter per socket; its state is never shared with another connection.
 // Requests on a connection are processed serially by the outer frame loop.
 type agentConnection struct {
-	ctx    context.Context
-	keys   *agentKeyService
-	denied bool
+	ctx      context.Context
+	keys     *agentKeyService
+	denied   bool
+	bindings agentBindingState
 }
 
 var _ agent.ExtendedAgent = (*agentConnection)(nil)
@@ -32,6 +33,9 @@ var _ agent.ExtendedAgent = (*agentConnection)(nil)
 func (a *agentConnection) List() ([]*agent.Key, error) {
 	if a.denied || a.ctx.Err() != nil {
 		return nil, errAgentDenied
+	}
+	if _, locked := a.keys.signingState(); locked {
+		return []*agent.Key{}, nil
 	}
 	identities, err := a.keys.registry.List(a.ctx)
 	if err != nil {
@@ -77,40 +81,21 @@ func (*agentConnection) Lock([]byte) error              { return errAgentDenied 
 func (*agentConnection) Unlock([]byte) error            { return errAgentDenied }
 func (*agentConnection) Signers() ([]ssh.Signer, error) { return nil, errAgentDenied }
 func (a *agentConnection) Extension(name string, contents []byte) ([]byte, error) {
-	if a.denied || a.ctx.Err() != nil {
-		return nil, errAgentDenied
-	}
-	if name != "session-bind@openssh.com" {
+	if name != sessionBindExtension {
 		return nil, agent.ErrExtensionUnsupported
 	}
-	// This is only a forwarding admission guard. Direct bindings are explicitly
-	// unsupported, not verified or recorded as authorization, until AGENT-08.
-	host, rest, ok := agentWireString(contents)
-	if !ok || len(host) == 0 || len(host) > 16384 {
+	// Binding provenance must be processed even while signing is locked or a
+	// verified forwarding chain is denied by the current local-only policy.
+	if a.ctx.Err() != nil || a.bindings.record(contents) != nil {
+		a.denied = true
+		a.bindings.poisoned = true
+		return nil, errAgentDenied
+	}
+	if a.bindings.forwarded {
 		a.denied = true
 		return nil, errAgentDenied
 	}
-	session, rest, ok := agentWireString(rest)
-	if !ok || len(session) == 0 || len(session) > 128 {
-		a.denied = true
-		return nil, errAgentDenied
-	}
-	signature, rest, ok := agentWireString(rest)
-	if !ok || len(signature) == 0 || len(signature) > 16384 || len(rest) != 1 || rest[0] != 0 {
-		a.denied = true
-		return nil, errAgentDenied
-	}
-	// Bound and validate encodings without trusting the host or verifying a bind.
-	if _, err := ssh.ParsePublicKey(host); err != nil {
-		a.denied = true
-		return nil, errAgentDenied
-	}
-	var sig ssh.Signature
-	if ssh.Unmarshal(signature, &sig) != nil || sig.Format == "" || len(sig.Blob) == 0 {
-		a.denied = true
-		return nil, errAgentDenied
-	}
-	return nil, agent.ErrExtensionUnsupported
+	return []byte{6}, nil
 }
 func agentWireString(data []byte) (value, rest []byte, ok bool) {
 	if len(data) < 4 {
@@ -137,7 +122,7 @@ func dispatchAgentFrame(a *agentConnection, body []byte) ([]byte, error) {
 	if len(body) == 0 || len(body) > maxAgentFrameBytes {
 		return failure, errAgentProtocol
 	}
-	if a.denied {
+	if a.denied && body[0] != agentExtensionCode {
 		return failure, nil
 	}
 	switch body[0] {
@@ -162,6 +147,7 @@ func dispatchAgentFrame(a *agentConnection, body []byte) ([]byte, error) {
 		name, contents, ok := agentWireString(body[1:])
 		if !ok || len(name) == 0 || len(name) > 256 {
 			a.denied = true
+			a.bindings.poisoned = true
 			return failure, errAgentProtocol
 		}
 		reply, err := a.Extension(string(name), contents)
