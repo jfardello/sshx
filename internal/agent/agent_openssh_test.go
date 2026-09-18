@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -186,12 +187,45 @@ func TestAgentOpenSSHIntegration(t *testing.T) {
 			if backend.reads.Load() != before {
 				t.Fatal("mutation fetched a backend key")
 			}
+			// Repeat real authentication with a pinned destination policy for
+			// every advertised credential algorithm, including both RSA flags.
+			record.Policy = "destination-constrained"
+			record.Destinations = &agentDestinationPolicy{Version: 1, Edges: []agentDestinationEdge{policyEdge(nil, hostKey, "sshx-fixture")}}
+			constrained, err := parseAgentRegistry(policyJSON(t, record))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := server.keys.replaceRegistry(constrained); err != nil {
+				t.Fatal(err)
+			}
+			before = backend.reads.Load()
+			if output, err := run("ssh", args...); err != nil || string(output) != "agent-authenticated\n" {
+				t.Fatal("constrained OpenSSH authentication", err)
+			}
+			if backend.reads.Load() != before+1 {
+				t.Fatal("constrained connection did not use exactly one backend signature")
+			}
+			record.Destinations.Edges[0].To.Username = "different-user"
+			constrained, err = parseAgentRegistry(policyJSON(t, record))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := server.keys.replaceRegistry(constrained); err != nil {
+				t.Fatal(err)
+			}
+			before = backend.reads.Load()
+			if _, err := run("ssh", args...); err == nil {
+				t.Fatal("wrong destination user authenticated")
+			}
+			if backend.reads.Load() != before {
+				t.Fatal("denied destination user fetched a key")
+			}
 			backend.assertCleared(t)
 		})
 	}
 }
 
-func startAgentSSHFixture(t *testing.T, allowed ssh.PublicKey, algorithm string) (string, ssh.PublicKey, func()) {
+func startAgentSSHFixture(t *testing.T, allowed ssh.PublicKey, algorithm string, forwardTo ...string) (string, ssh.PublicKey, func()) {
 	t.Helper()
 	_, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -239,6 +273,37 @@ func startAgentSSHFixture(t *testing.T, allowed ssh.PublicKey, algorithm string)
 				defer server.Close()
 				go ssh.DiscardRequests(requests)
 				for channel := range channels {
+					if channel.ChannelType() == "direct-tcpip" && len(forwardTo) == 1 {
+						var request struct {
+							Host       string
+							Port       uint32
+							Origin     string
+							OriginPort uint32
+						}
+						if ssh.Unmarshal(channel.ExtraData(), &request) != nil || net.JoinHostPort(request.Host, strconv.Itoa(int(request.Port))) != forwardTo[0] {
+							channel.Reject(ssh.Prohibited, "fixture target required")
+							continue
+						}
+						target, err := net.DialTimeout("tcp", forwardTo[0], time.Second)
+						if err != nil {
+							channel.Reject(ssh.ConnectionFailed, "fixture unavailable")
+							continue
+						}
+						stream, requests, err := channel.Accept()
+						if err != nil {
+							target.Close()
+							return
+						}
+						go ssh.DiscardRequests(requests)
+						copied := make(chan struct{}, 2)
+						go func() { io.Copy(target, stream); target.(*net.TCPConn).CloseWrite(); copied <- struct{}{} }()
+						go func() { io.Copy(stream, target); stream.CloseWrite(); copied <- struct{}{} }()
+						<-copied
+						target.Close()
+						stream.Close()
+						<-copied
+						continue
+					}
 					if channel.ChannelType() != "session" {
 						channel.Reject(ssh.UnknownChannelType, "session required")
 						continue

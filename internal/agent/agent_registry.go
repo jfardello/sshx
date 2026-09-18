@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"unicode"
 
@@ -26,26 +27,31 @@ const maxAgentRegistryBytes = 1024 * 1024
 var errAgentRegistry = errors.New("invalid or untrusted SSH key registry")
 
 // Registry data is public, owner-approved configuration. Backend metadata never
-// changes enablement or policy. Version 1 deliberately cannot activate constraints.
+// changes enablement or policy. Version 2 adds explicitly pinned destinations.
 type agentRegistryDocument struct {
 	Version int              `json:"version"`
 	Keys    []agentKeyRecord `json:"keys"`
 }
 type agentKeyRecord struct {
-	ID         string            `json:"id"`
-	PublicKey  string            `json:"public_key"`
-	Enabled    bool              `json:"enabled"`
-	Policy     string            `json:"policy"`
-	Comment    string            `json:"comment,omitempty"`
-	Backend    credentialBackend `json:"backend"`
-	Reference  string            `json:"reference"`
-	Collection string            `json:"collection,omitempty"`
+	ID           string                  `json:"id"`
+	PublicKey    string                  `json:"public_key"`
+	Enabled      bool                    `json:"enabled"`
+	Policy       string                  `json:"policy"`
+	Comment      string                  `json:"comment,omitempty"`
+	Backend      credentialBackend       `json:"backend"`
+	Reference    string                  `json:"reference"`
+	Collection   string                  `json:"collection,omitempty"`
+	Destinations *agentDestinationPolicy `json:"destinations,omitempty"`
 }
 type registeredAgentKey struct {
 	record    agentKeyRecord
 	publicKey ssh.PublicKey
+	policy    *agentPolicy
 }
-type agentRegistry struct{ keys []registeredAgentKey }
+type agentRegistry struct {
+	keys   []registeredAgentKey
+	source string
+}
 type agentIdentity struct {
 	ID        string
 	PublicKey ssh.PublicKey
@@ -74,6 +80,13 @@ func loadAgentRegistry() (*agentRegistry, error) {
 // Traverse directory descriptors rather than checking paths then reopening them.
 // O_NOFOLLOW protects both the file and ancestors from symlink substitution.
 func readAgentRegistry(name string) (*agentRegistry, error) {
+	registry, err := readAgentRegistrySnapshot(name)
+	if err == nil {
+		registry.source = name
+	}
+	return registry, err
+}
+func readAgentRegistrySnapshot(name string) (*agentRegistry, error) {
 	if !filepath.IsAbs(name) || filepath.Clean(name) != name {
 		return nil, errAgentRegistry
 	}
@@ -147,17 +160,35 @@ func parseAgentRegistry(data []byte) (*agentRegistry, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var doc agentRegistryDocument
-	if decoder.Decode(&doc) != nil || doc.Version != 1 {
+	if decoder.Decode(&doc) != nil || (doc.Version != 1 && doc.Version != 2) {
 		return nil, errAgentRegistry
 	}
 	registry := &agentRegistry{}
 	ids := map[string]bool{}
 	blobs := map[string]agentKeyRecord{}
 	for _, record := range doc.Keys {
-		if !validRegistryID(record.ID) || ids[record.ID] || record.Policy != "unrestricted-local" || len(record.Comment) > 128 || strings.IndexFunc(record.Comment, unicode.IsControl) >= 0 {
+		if !validRegistryID(record.ID) || ids[record.ID] || len(record.Comment) > 128 || strings.IndexFunc(record.Comment, unicode.IsControl) >= 0 {
 			return nil, errAgentRegistry
 		}
 		ids[record.ID] = true
+		var policy *agentPolicy
+		switch record.Policy {
+		case "unrestricted-local":
+			if record.Destinations != nil {
+				return nil, errAgentRegistry
+			}
+		case "destination-constrained":
+			if doc.Version != 2 {
+				return nil, errAgentRegistry
+			}
+			var err error
+			policy, err = compileAgentPolicy(record.Destinations)
+			if err != nil {
+				return nil, errAgentRegistry
+			}
+		default:
+			return nil, errAgentRegistry
+		}
 		switch record.Backend {
 		case credentialBackendGopass:
 			if !validAgentGopassPath(record.Reference) || record.Collection != "" {
@@ -180,13 +211,13 @@ func parseAgentRegistry(data []byte) (*agentRegistry, error) {
 		}
 		blob := string(pub.Marshal())
 		if prior, ok := blobs[blob]; ok {
-			if prior.Backend != record.Backend || prior.Reference != record.Reference || prior.Collection != record.Collection || prior.Policy != record.Policy || prior.Enabled != record.Enabled {
+			if prior.Backend != record.Backend || prior.Reference != record.Reference || prior.Collection != record.Collection || prior.Policy != record.Policy || prior.Enabled != record.Enabled || !reflect.DeepEqual(prior.Destinations, record.Destinations) {
 				return nil, errAgentRegistry
 			}
 			continue // Equivalent aliases resolve to one canonical identity.
 		}
 		blobs[blob] = record
-		registry.keys = append(registry.keys, registeredAgentKey{record: record, publicKey: pub})
+		registry.keys = append(registry.keys, registeredAgentKey{record: record, publicKey: pub, policy: policy})
 	}
 	return registry, nil
 }
@@ -380,7 +411,7 @@ func sanitizeKeyReadError(ctx context.Context, err error) error {
 
 func validRegistryJSONField(name string) bool {
 	switch name {
-	case "version", "keys", "id", "public_key", "enabled", "policy", "comment", "backend", "reference", "collection":
+	case "version", "keys", "id", "public_key", "enabled", "policy", "comment", "backend", "reference", "collection", "destinations", "require_hostbound", "edges", "from", "to", "hostname", "username", "host_keys":
 		return true
 	}
 	return false

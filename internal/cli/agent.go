@@ -24,6 +24,14 @@ func newAgentCommand(deps dependencies) *cobra.Command {
 	root.SetErr(deps.stderr)
 	var startSocket, envSocket, statusSocket, shell string
 	var foreground, activation, envSystemd, statusSystemd, stopSystemd bool
+	var verbose bool
+	root.PersistentFlags().BoolVar(&verbose, "verbose", false, "write secret-safe agent diagnostics to stderr")
+	diagnosticWriter := func(cmd *cobra.Command) io.Writer {
+		if verbose {
+			return cmd.ErrOrStderr()
+		}
+		return nil
+	}
 	manager := newAgentManager(deps)
 	start := &cobra.Command{Use: "start --foreground", Short: "Serve until interrupted", Args: cobra.NoArgs}
 	start.Flags().BoolVar(&foreground, "foreground", false, "serve in the foreground (required)")
@@ -45,7 +53,7 @@ func newAgentCommand(deps dependencies) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		server, err := startAgentMode(ctx, name, activation)
+		server, err := startAgentMode(ctx, name, activation, diagnosticWriter(cmd))
 		if err != nil {
 			return err
 		}
@@ -101,7 +109,7 @@ func newAgentCommand(deps dependencies) *cobra.Command {
 		if cmd.ArgsLenAtDash() != 0 {
 			return errors.New("use agent run -- command [args...]")
 		}
-		return runWithAgent(cmd.Context(), args, os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		return runWithAgent(cmd.Context(), args, os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr(), diagnosticWriter(cmd))
 	}
 	stop := &cobra.Command{Use: "stop", Short: "Stop the systemd socket and service, or explain foreground shutdown", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -164,7 +172,7 @@ func startAgent(ctx context.Context, socket string) (*agent.Server, error) {
 	return startAgentMode(ctx, socket, false)
 }
 
-func startAgentMode(ctx context.Context, socket string, activation bool) (*agent.Server, error) {
+func startAgentMode(ctx context.Context, socket string, activation bool, diagnostics ...io.Writer) (*agent.Server, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -172,10 +180,16 @@ func startAgentMode(ctx context.Context, socket string, activation bool) (*agent
 	if err != nil {
 		return nil, err
 	}
+	var server *agent.Server
 	if activation {
-		return agent.NewActivatedServer(socket, registry, keystore.Open)
+		server, err = agent.NewActivatedServer(socket, registry, keystore.Open)
+	} else {
+		server, err = agent.NewServer(socket, registry, keystore.Open)
 	}
-	return agent.NewServer(socket, registry, keystore.Open)
+	if err == nil && len(diagnostics) > 0 {
+		server.SetDiagnostics(diagnostics[0])
+	}
+	return server, err
 }
 
 func managedAgentEnvironment(inherited []string, socket string) []string {
@@ -196,7 +210,7 @@ type agentCommandExit struct{ code int }
 func (e *agentCommandExit) Error() string { return "agent command exited with a non-zero status" }
 func (e *agentCommandExit) Code() int     { return e.code }
 
-func runWithAgent(ctx context.Context, argv []string, stdin io.Reader, stdout, stderr io.Writer) (returnErr error) {
+func runWithAgent(ctx context.Context, argv []string, stdin io.Reader, stdout, stderr io.Writer, diagnostics ...io.Writer) (returnErr error) {
 	// Register before setup so a termination signal cannot strand a new socket.
 	signals := make(chan os.Signal, 8)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
@@ -220,7 +234,7 @@ func runWithAgent(ctx context.Context, argv []string, stdin io.Reader, stdout, s
 		}
 	}()
 	socket := filepath.Join(directory, "agent.sock")
-	server, err := startAgent(ctx, socket)
+	server, err := startAgentMode(ctx, socket, false, diagnostics...)
 	if err != nil {
 		return err
 	}

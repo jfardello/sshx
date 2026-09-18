@@ -34,29 +34,23 @@ func (a *agentConnection) List() ([]*agent.Key, error) {
 	if a.denied || a.ctx.Err() != nil {
 		return nil, errAgentDenied
 	}
-	if _, locked := a.keys.signingState(); locked {
-		return []*agent.Key{}, nil
-	}
-	identities, err := a.keys.registry.List(a.ctx)
-	if err != nil {
-		return nil, errAgentDenied
-	}
-	result := make([]*agent.Key, 0, len(identities))
-	for _, identity := range identities {
-		result = append(result, &agent.Key{Format: identity.PublicKey.Type(), Blob: identity.PublicKey.Marshal(), Comment: identity.Comment})
-	}
-	return result, nil
+	return a.keys.list(a.ctx, &a.bindings)
 }
 func (a *agentConnection) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {
 	return a.SignWithFlags(key, data, 0)
 }
 func (a *agentConnection) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.SignatureFlags) (*ssh.Signature, error) {
 	if a.denied || key == nil {
+		a.keys.debug("sign denied: connection rejected or key absent")
 		return nil, errAgentDenied
 	}
 	blob := key.Marshal()
-	registered, ok := a.keys.byBlob[string(blob)]
+	if err := a.keys.refresh(); err != nil {
+		return nil, errAgentDenied
+	}
+	registered, ok := a.keys.lookup(blob)
 	if !ok {
+		a.keys.debug("sign denied: identity not registered or disabled")
 		return nil, errAgentDenied
 	}
 	algorithm := registered.publicKey.Type()
@@ -72,7 +66,7 @@ func (a *agentConnection) SignWithFlags(key ssh.PublicKey, data []byte, flags ag
 	} else if flags != 0 {
 		return nil, errAgentDenied
 	}
-	return a.keys.sign(a.ctx, blob, data, algorithm)
+	return a.keys.signBound(a.ctx, blob, data, algorithm, &a.bindings)
 }
 func (*agentConnection) Add(agent.AddedKey) error       { return errAgentDenied }
 func (*agentConnection) Remove(ssh.PublicKey) error     { return errAgentDenied }
@@ -89,12 +83,15 @@ func (a *agentConnection) Extension(name string, contents []byte) ([]byte, error
 	if a.ctx.Err() != nil || a.bindings.record(contents) != nil {
 		a.denied = true
 		a.bindings.poisoned = true
+		a.keys.debug("binding denied: invalid proof, sequence or canceled connection")
 		return nil, errAgentDenied
 	}
 	if a.bindings.forwarded {
+		a.keys.debug("binding denied: forwarding disabled")
 		a.denied = true
 		return nil, errAgentDenied
 	}
+	a.keys.debug("direct session binding accepted")
 	return []byte{6}, nil
 }
 func agentWireString(data []byte) (value, rest []byte, ok bool) {
@@ -140,7 +137,11 @@ func dispatchAgentFrame(a *agentConnection, body []byte) ([]byte, error) {
 			return failure, errAgentProtocol
 		}
 		// Exact registered bytes, not attacker-supplied type strings, reach upstream.
-		if _, ok := a.keys.byBlob[string(blob)]; !ok {
+		if err := a.keys.refresh(); err != nil {
+			return failure, nil
+		}
+		if _, ok := a.keys.lookup(blob); !ok {
+			a.keys.debug("sign denied: identity not registered or disabled")
 			return failure, nil
 		}
 	case agentExtensionCode:
@@ -148,6 +149,7 @@ func dispatchAgentFrame(a *agentConnection, body []byte) ([]byte, error) {
 		if !ok || len(name) == 0 || len(name) > 256 {
 			a.denied = true
 			a.bindings.poisoned = true
+			a.keys.debug("binding denied: invalid proof, sequence or canceled connection")
 			return failure, errAgentProtocol
 		}
 		reply, err := a.Extension(string(name), contents)

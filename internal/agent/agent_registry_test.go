@@ -127,7 +127,7 @@ func TestAgentRegistryRejectsUnsafeRecords(t *testing.T) {
 			}
 		})
 	}
-	for _, data := range []string{"", "null", "[]", "{}", `{"version":2,"keys":[]}`, `{"version":1,"version":1,"keys":[]}`, `{"version":1,"keys":null}`, `{"version":1,"keys":[],"passphrase":"private"}`, `{"version":1,"keys":[]} {}`, `{"version":1,`, strings.Repeat(" ", maxAgentRegistryBytes+1)} {
+	for _, data := range []string{"", "null", "[]", "{}", `{"version":3,"keys":[]}`, `{"version":1,"version":1,"keys":[]}`, `{"version":1,"keys":null}`, `{"version":1,"keys":[],"passphrase":"private"}`, `{"version":1,"keys":[]} {}`, `{"version":1,`, strings.Repeat(" ", maxAgentRegistryBytes+1)} {
 		if _, err := parseAgentRegistry([]byte(data)); err == nil {
 			t.Fatal("accepted invalid JSON")
 		}

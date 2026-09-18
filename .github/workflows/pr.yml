@@ -116,7 +116,7 @@ jobs:
         working-directory: candidate
         run: >-
           env SSHX_AGENT_OPENSSH_INTEGRATION=1
-          go test -race -run '^TestAgentOpenSSHIntegration$' -count=1 ./...
+          go test -race -run '^(TestAgentOpenSSHIntegration|TestAgentDestinationOpenSSHIntegration)$' -count=1 ./...
 
       - name: Run race tests
         working-directory: candidate

@@ -382,3 +382,21 @@ func TestAgentManagedEnvironment(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestAgentRunVerbose(t *testing.T) {
+	agentCLIHome(t)
+	for _, enabled := range []bool{false, true} {
+		var stdout, stderr bytes.Buffer
+		cmd := newRootCommandWithDependencies(dependencies{stdout: &stdout, stderr: &stderr})
+		cmd.SetArgs([]string{"agent", "run", fmt.Sprintf("--verbose=%t", enabled), "--", "sh", "-c", "printf child-output"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		if stdout.String() != "child-output" {
+			t.Fatalf("stdout contaminated: %q", stdout.String())
+		}
+		if strings.Contains(stderr.String(), "diagnostics enabled") != enabled {
+			t.Fatalf("verbose=%v stderr=%q", enabled, stderr.String())
+		}
+	}
+}
