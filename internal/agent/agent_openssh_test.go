@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/binary"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
@@ -204,6 +205,49 @@ func TestAgentOpenSSHIntegration(t *testing.T) {
 			}
 			if backend.reads.Load() != before+1 {
 				t.Fatal("constrained connection did not use exactly one backend signature")
+			}
+			// Exercise actual helper pipes and encrypted backend material with
+			// the real OpenSSH client, independently for every key algorithm.
+			record.Confirm = true
+			confirmed, err := parseAgentRegistry(policyJSON(t, record))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := server.keys.replaceRegistry(confirmed); err != nil {
+				t.Fatal(err)
+			}
+			encrypted, err := ssh.MarshalPrivateKeyWithPassphrase(fixture.private, "fixture", []byte("fixture-passphrase"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			backend.data[record.Reference] = pem.EncodeToMemory(encrypted)
+			helper := promptFixture(t, `import json,sys
+r=json.load(sys.stdin)
+assert r['destination']['status']=='verified-session-and-policy'
+assert r['destination']['username']=='sshx-fixture'
+response=dict(version=1,request_id=r['request_id'],approved=True)
+if r['operation']=='passphrase': response['passphrase']='Zml4dHVyZS1wYXNzcGhyYXNl'
+json.dump(response,sys.stdout)
+`)
+			if err := server.SetPromptHelper(helper); err != nil {
+				t.Fatal(err)
+			}
+			before = backend.reads.Load()
+			if output, err := run("ssh", args...); err != nil || string(output) != "agent-authenticated\n" {
+				t.Fatal("confirmed encrypted OpenSSH authentication", err)
+			}
+			if backend.reads.Load() != before+1 {
+				t.Fatal("encrypted key read count")
+			}
+			if err := server.SetPromptHelper(""); err != nil {
+				t.Fatal(err)
+			}
+			before = backend.reads.Load()
+			if _, err := run("ssh", args...); err == nil {
+				t.Fatal("missing confirmation helper authenticated")
+			}
+			if backend.reads.Load() != before {
+				t.Fatal("missing confirmation helper read backend")
 			}
 			record.Destinations.Edges[0].To.Username = "different-user"
 			constrained, err = parseAgentRegistry(policyJSON(t, record))

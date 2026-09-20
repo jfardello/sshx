@@ -400,3 +400,11 @@ func TestAgentRunVerbose(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentPromptHelperValidation(t *testing.T) {
+	agentCLIHome(t)
+	_, err := agentCLIExecute(context.Background(), "agent", "run", "--prompt-helper=relative-command", "--", "sh", "-c", "exit 0")
+	if err == nil {
+		t.Fatal("untrusted prompt helper accepted")
+	}
+}

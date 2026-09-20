@@ -30,6 +30,10 @@ func (s *agentKeyService) debug(event string) {
 
 func diagnosticKeyError(err error) string {
 	switch {
+	case errors.Is(err, errAgentPromptUnavailable), errors.Is(err, errAgentPromptDenied):
+		return "sign denied: local prompt unavailable, denied or canceled"
+	case errors.Is(err, errAgentPassphrase):
+		return "sign denied: encrypted OpenSSH key decryption failed"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "sign denied: credential operation timed out"
 	case errors.Is(err, context.Canceled):

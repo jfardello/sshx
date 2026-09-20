@@ -33,6 +33,7 @@ type agentRegistryDocument struct {
 	Keys    []agentKeyRecord `json:"keys"`
 }
 type agentKeyRecord struct {
+	Confirm      bool                    `json:"confirm,omitempty"`
 	ID           string                  `json:"id"`
 	PublicKey    string                  `json:"public_key"`
 	Enabled      bool                    `json:"enabled"`
@@ -171,6 +172,9 @@ func parseAgentRegistry(data []byte) (*agentRegistry, error) {
 			return nil, errAgentRegistry
 		}
 		ids[record.ID] = true
+		if record.Confirm && doc.Version != 2 {
+			return nil, errAgentRegistry
+		}
 		var policy *agentPolicy
 		switch record.Policy {
 		case "unrestricted-local":
@@ -211,7 +215,7 @@ func parseAgentRegistry(data []byte) (*agentRegistry, error) {
 		}
 		blob := string(pub.Marshal())
 		if prior, ok := blobs[blob]; ok {
-			if prior.Backend != record.Backend || prior.Reference != record.Reference || prior.Collection != record.Collection || prior.Policy != record.Policy || prior.Enabled != record.Enabled || !reflect.DeepEqual(prior.Destinations, record.Destinations) {
+			if prior.Backend != record.Backend || prior.Reference != record.Reference || prior.Collection != record.Collection || prior.Policy != record.Policy || prior.Enabled != record.Enabled || prior.Confirm != record.Confirm || !reflect.DeepEqual(prior.Destinations, record.Destinations) {
 				return nil, errAgentRegistry
 			}
 			continue // Equivalent aliases resolve to one canonical identity.
@@ -320,7 +324,7 @@ func (r *agentRegistry) List(ctx context.Context) ([]agentIdentity, error) {
 // withKey bounds ownership of private material to one local operation. The caller
 // must authorize that operation first; this is not a public signing/agent API.
 // Signers must not escape the callback. Go does not guarantee secure erasure.
-func (r *agentRegistry) withKey(ctx context.Context, id string, store keyMaterialStore, use func(ssh.Signer) error) error {
+func (r *agentRegistry) withKey(ctx context.Context, id string, store keyMaterialStore, use func(ssh.Signer) error, parsers ...func([]byte, ssh.PublicKey) (ssh.Signer, error)) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -334,7 +338,11 @@ func (r *agentRegistry) withKey(ctx context.Context, id string, store keyMateria
 			if err != nil {
 				return sanitizeKeyReadError(ctx, err)
 			}
-			signer, err := parseRegisteredPrivateKey(data, key.publicKey)
+			parse := parseRegisteredPrivateKey
+			if len(parsers) > 0 {
+				parse = parsers[0]
+			}
+			signer, err := parse(data, key.publicKey)
 			if err != nil {
 				return err
 			}
@@ -374,6 +382,10 @@ func parseRegisteredPrivateKey(data []byte, public ssh.PublicKey) (ssh.Signer, e
 	if err != nil {
 		return nil, errKeyUnsupported
 	}
+	return validateRegisteredPrivateKey(private, public)
+}
+
+func validateRegisteredPrivateKey(private any, public ssh.PublicKey) (ssh.Signer, error) {
 	var ed ed25519.PrivateKey
 	switch key := private.(type) {
 	case *ed25519.PrivateKey:
@@ -411,7 +423,7 @@ func sanitizeKeyReadError(ctx context.Context, err error) error {
 
 func validRegistryJSONField(name string) bool {
 	switch name {
-	case "version", "keys", "id", "public_key", "enabled", "policy", "comment", "backend", "reference", "collection", "destinations", "require_hostbound", "edges", "from", "to", "hostname", "username", "host_keys":
+	case "confirm", "version", "keys", "id", "public_key", "enabled", "policy", "comment", "backend", "reference", "collection", "destinations", "require_hostbound", "edges", "from", "to", "hostname", "username", "host_keys":
 		return true
 	}
 	return false

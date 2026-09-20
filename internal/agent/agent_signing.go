@@ -43,6 +43,8 @@ type agentKeyService struct {
 	source      string
 	fingerprint [32]byte
 	invalid     bool
+	prompt      *agentPrompter
+	changed     chan struct{}
 }
 
 // The lifecycle lock gate is separate from connection provenance. Public lock
@@ -53,8 +55,17 @@ func (s *agentKeyService) setLocked(locked bool) {
 	defer s.stateMutex.Unlock()
 	if s.locked != locked {
 		s.locked = locked
-		s.generation++
+		s.advanceGeneration()
 	}
+}
+
+// advanceGeneration is called with stateMutex held.
+func (s *agentKeyService) advanceGeneration() {
+	s.generation++
+	if s.changed != nil {
+		close(s.changed)
+	}
+	s.changed = make(chan struct{})
 }
 
 func (s *agentKeyService) signingState() (uint64, bool) {
@@ -104,7 +115,7 @@ func newAgentKeyService(registry *agentRegistry, opener agentStoreOpener) (*agen
 		return nil, errAgentDenied
 	}
 	return &agentKeyService{registry: snapshot, byBlob: byBlob, fingerprint: fingerprint,
-		source: registry.source, open: opener, jobs: make(chan struct{}, maxAgentSigningJobs)}, nil
+		source: registry.source, open: opener, changed: make(chan struct{}), jobs: make(chan struct{}, maxAgentSigningJobs)}, nil
 }
 
 // refresh reads only owner-controlled public configuration. Changed, removed or
@@ -127,7 +138,7 @@ func (s *agentKeyService) invalidateRegistry() {
 	s.stateMutex.Lock()
 	defer s.stateMutex.Unlock()
 	if !s.invalid {
-		s.generation++
+		s.advanceGeneration()
 	}
 	s.invalid = true
 }
@@ -140,7 +151,7 @@ func (s *agentKeyService) replaceRegistry(registry *agentRegistry) error {
 	s.stateMutex.Lock()
 	defer s.stateMutex.Unlock()
 	if s.invalid || fingerprint != s.fingerprint {
-		s.generation++
+		s.advanceGeneration()
 		s.registry, s.byBlob, s.fingerprint = snapshot, byBlob, fingerprint
 	}
 	s.invalid = false
@@ -187,6 +198,7 @@ func (s *agentKeyService) signBound(ctx context.Context, blob, data []byte, algo
 	s.stateMutex.RLock()
 	generation, locked, invalid := s.generation, s.locked, s.invalid
 	registry := s.registry
+	prompt, changed := s.prompt, s.changed
 	key, ok := s.byBlob[string(blob)]
 	s.stateMutex.RUnlock()
 	s.debug("sign request received")
@@ -215,6 +227,43 @@ func (s *agentKeyService) signBound(ctx context.Context, blob, data []byte, algo
 	}
 	ctx, cancel := context.WithTimeout(ctx, credentialOperationTimeout)
 	defer cancel()
+	// An observed policy/helper/lock transition cancels an outstanding helper.
+	go func() {
+		select {
+		case <-changed:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	revalidate := func() error {
+		if ctx.Err() != nil {
+			return errAgentDenied
+		}
+		if s.refresh() != nil {
+			return errAgentDenied
+		}
+		current, locked := s.signingState()
+		if locked || current != generation {
+			return errAgentDenied
+		}
+		return nil
+	}
+	request, err := newAgentPromptRequest(ctx, key, data, algorithm, generation, bindings)
+	if err != nil {
+		return nil, errAgentDenied
+	}
+	if key.record.Confirm {
+		s.debug("requesting local signing confirmation")
+		response, err := askAgentPrompt(ctx, prompt, request, "confirm")
+		clearBytes(response)
+		if err != nil {
+			s.debug("sign denied: local confirmation unavailable, denied or canceled")
+			return nil, errAgentDenied
+		}
+		if revalidate() != nil {
+			return nil, errAgentDenied
+		}
+	}
 	// Only fixed error messages cross into upstream protocol logging.
 	defer func() {
 		refreshErr := s.refresh()
@@ -248,6 +297,9 @@ func (s *agentKeyService) signBound(ctx context.Context, blob, data []byte, algo
 	}
 	s.debug("credential backend opened; reading registered key")
 	err = registry.withKey(ctx, key.record.ID, store, func(signer ssh.Signer) error {
+		if err := revalidate(); err != nil {
+			return err
+		}
 		s.debug("credential read and private-key validation succeeded")
 		algorithmSigner, ok := signer.(ssh.AlgorithmSigner)
 		if !ok {
@@ -261,6 +313,11 @@ func (s *agentKeyService) signBound(ctx context.Context, blob, data []byte, algo
 		// Also catch inconsistent provider private-key encodings before releasing a
 		// result. Verification uses the trusted registered public key.
 		return key.publicKey.Verify(data, signature)
+	}, func(data []byte, public ssh.PublicKey) (ssh.Signer, error) {
+		if err := revalidate(); err != nil {
+			return nil, err
+		}
+		return parseAgentKeyWithPrompt(ctx, data, public, prompt, request, revalidate)
 	})
 	if err != nil {
 		s.debug(diagnosticKeyError(err))

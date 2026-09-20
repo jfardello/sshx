@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -181,27 +182,70 @@ func (s *agentServer) Serve(ctx context.Context) error {
 	}
 }
 func (s *agentServer) serveConnection(conn *net.UnixConn) {
-	adapter := &agentConnection{ctx: s.ctx, keys: s.keys}
+	var identity [32]byte
+	if _, err := rand.Read(identity[:]); err != nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.WithValue(s.ctx, agentConnectionIdentity{}, identity))
+	// A separate bounded reader observes disconnects while a local prompt waits.
+	// Only one pending frame is retained; excessive pipelining closes the client.
+	frames := make(chan []byte, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer cancel()
+		for {
+			if conn.SetReadDeadline(time.Now().Add(s.readTimeout)) != nil {
+				return
+			}
+			var header [4]byte
+			if _, err := io.ReadFull(conn, header[:]); err != nil {
+				return
+			}
+			size := binary.BigEndian.Uint32(header[:])
+			if size == 0 || size > maxAgentFrameBytes {
+				return
+			}
+			body := make([]byte, int(size))
+			if _, err := io.ReadFull(conn, body); err != nil {
+				clearBytes(body)
+				return
+			}
+			select {
+			case frames <- body:
+			case <-ctx.Done():
+				clearBytes(body)
+				return
+			default:
+				clearBytes(body)
+				return
+			}
+		}
+	}()
+	defer func() {
+		cancel()
+		_ = conn.Close()
+		<-done
+		for {
+			select {
+			case body := <-frames:
+				clearBytes(body)
+			default:
+				return
+			}
+		}
+	}()
+	adapter := &agentConnection{ctx: ctx, keys: s.keys}
 	for {
-		if conn.SetReadDeadline(time.Now().Add(s.readTimeout)) != nil {
+		var body []byte
+		select {
+		case <-ctx.Done():
 			return
-		}
-		var header [4]byte
-		if _, err := io.ReadFull(conn, header[:]); err != nil {
-			return
-		}
-		size := binary.BigEndian.Uint32(header[:])
-		if size == 0 || size > maxAgentFrameBytes {
-			return
-		}
-		body := make([]byte, int(size))
-		if _, err := io.ReadFull(conn, body); err != nil {
-			clearBytes(body)
-			return
+		case body = <-frames:
 		}
 		reply, dispatchErr := dispatchAgentFrame(adapter, body)
 		clearBytes(body)
-		if conn.SetWriteDeadline(time.Now().Add(s.writeTimeout)) != nil {
+		if ctx.Err() != nil || conn.SetWriteDeadline(time.Now().Add(s.writeTimeout)) != nil {
 			clearBytes(reply)
 			return
 		}
