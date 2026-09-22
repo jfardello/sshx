@@ -26,6 +26,8 @@ func newAgentCommand(deps dependencies) *cobra.Command {
 	var foreground, activation, envSystemd, statusSystemd, stopSystemd bool
 	var verbose bool
 	var promptHelper string
+	var cacheTTL time.Duration
+	root.PersistentFlags().DurationVar(&cacheTTL, "cache-ttl", 0, "absolute signer cache lifetime (0 disables; maximum 5m)")
 	root.PersistentFlags().StringVar(&promptHelper, "prompt-helper", "", "absolute path to trusted local confirmation/passphrase helper")
 	root.PersistentFlags().BoolVar(&verbose, "verbose", false, "write secret-safe agent diagnostics to stderr")
 	diagnosticWriter := func(cmd *cobra.Command) io.Writer {
@@ -55,7 +57,7 @@ func newAgentCommand(deps dependencies) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		server, err := startAgentMode(context.WithValue(ctx, agentPromptHelperContext{}, promptHelper), name, activation, diagnosticWriter(cmd))
+		server, err := startAgentMode(context.WithValue(context.WithValue(ctx, agentCacheTTLContext{}, cacheTTL), agentPromptHelperContext{}, promptHelper), name, activation, diagnosticWriter(cmd))
 		if err != nil {
 			return err
 		}
@@ -111,7 +113,7 @@ func newAgentCommand(deps dependencies) *cobra.Command {
 		if cmd.ArgsLenAtDash() != 0 {
 			return errors.New("use agent run -- command [args...]")
 		}
-		return runWithAgent(context.WithValue(cmd.Context(), agentPromptHelperContext{}, promptHelper), args, os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr(), diagnosticWriter(cmd))
+		return runWithAgent(context.WithValue(context.WithValue(cmd.Context(), agentCacheTTLContext{}, cacheTTL), agentPromptHelperContext{}, promptHelper), args, os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr(), diagnosticWriter(cmd))
 	}
 	stop := &cobra.Command{Use: "stop", Short: "Stop the systemd socket and service, or explain foreground shutdown", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -171,6 +173,7 @@ func agentSocketPath(explicit string, create bool) (string, error) {
 }
 
 type agentPromptHelperContext struct{}
+type agentCacheTTLContext struct{}
 
 func startAgent(ctx context.Context, socket string) (*agent.Server, error) {
 	return startAgentMode(ctx, socket, false)
@@ -196,6 +199,13 @@ func startAgentMode(ctx context.Context, socket string, activation bool, diagnos
 				_ = server.Close()
 				return nil, err
 			}
+		}
+	}
+	if err == nil {
+		ttl, _ := ctx.Value(agentCacheTTLContext{}).(time.Duration)
+		if err = server.SetCacheTTL(ttl); err != nil {
+			_ = server.Close()
+			return nil, err
 		}
 	}
 	if err == nil && len(diagnostics) > 0 {

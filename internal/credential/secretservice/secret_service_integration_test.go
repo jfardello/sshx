@@ -164,7 +164,8 @@ func newIntegrationSecretServiceProvider(secret []byte) (*integrationSecretServi
 	}
 	provider.itemProps, err = prop.Export(conn, integrationItemPath, prop.Map{
 		secretServiceItemInterface: {
-			"Label": {Value: "integration", Emit: prop.EmitConst},
+			"Label":    {Value: "integration", Emit: prop.EmitConst},
+			"Modified": {Value: uint64(1), Emit: prop.EmitTrue},
 			"Attributes": {Value: map[string]string{
 				"application": "sshx-integration-test",
 				"sshx.target": "integration@127.0.0.1",

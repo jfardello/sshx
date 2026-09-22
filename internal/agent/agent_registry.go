@@ -323,7 +323,8 @@ func (r *agentRegistry) List(ctx context.Context) ([]agentIdentity, error) {
 
 // withKey bounds ownership of private material to one local operation. The caller
 // must authorize that operation first; this is not a public signing/agent API.
-// Signers must not escape the callback. Go does not guarantee secure erasure.
+// Only the signing service may retain a signer under a revocable cache lease.
+// Go does not guarantee secure erasure of parser allocations.
 func (r *agentRegistry) withKey(ctx context.Context, id string, store keyMaterialStore, use func(ssh.Signer) error, parsers ...func([]byte, ssh.PublicKey) (ssh.Signer, error)) error {
 	if err := ctx.Err(); err != nil {
 		return err

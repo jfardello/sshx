@@ -87,3 +87,18 @@ func SanitizeKeyReadError(ctx context.Context, err error) error {
 	}
 	return ErrRead
 }
+
+// KeyCacheLease pins a provider/item generation. Check must verify current
+// readiness without unlocking; Invalidated closes on any observed revocation.
+// Close releases the independent monitoring connection and must be bounded.
+type KeyCacheLease interface {
+	Check(context.Context) error
+	Invalidated() <-chan struct{}
+	Close() error
+}
+
+// KeyCacheProvider is optional. Stores without reliable monitoring must not
+// implement it: they continue fresh noninteractive reads on every operation.
+type KeyCacheProvider interface {
+	WatchKey(context.Context, Ref) (KeyCacheLease, error)
+}

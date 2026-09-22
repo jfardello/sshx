@@ -266,6 +266,7 @@ func (s *agentServer) Close() error {
 		}
 		s.mutex.Unlock()
 		s.workers.Wait()
+		s.keys.cache.close()
 		if s.ownsSocket {
 			var current unix.Stat_t
 			if err := unix.Fstatat(s.directoryFD, s.socketName, &current, unix.AT_SYMLINK_NOFOLLOW); err == nil && sameAgentSocket(s.socketStat, current) {

@@ -26,8 +26,8 @@ var (
 	errAgentProtocol = errors.New("invalid SSH agent message")
 )
 
-// Each signing operation owns its store connection. Opening is lazy, so neither
-// agent startup nor identity listing activates a provider. No automatic fallback.
+// Cold signing operations own their store connection; cache entries own separate
+// revocation monitors. Startup and listing never activate a provider. No fallback.
 type agentStoreOpener func(context.Context, credentialBackend) (credential.KeyStore, error)
 
 type agentKeyService struct {
@@ -45,6 +45,7 @@ type agentKeyService struct {
 	invalid     bool
 	prompt      *agentPrompter
 	changed     chan struct{}
+	cache       *agentSignerCache
 }
 
 // The lifecycle lock gate is separate from connection provenance. Public lock
@@ -62,6 +63,7 @@ func (s *agentKeyService) setLocked(locked bool) {
 // advanceGeneration is called with stateMutex held.
 func (s *agentKeyService) advanceGeneration() {
 	s.generation++
+	s.cache.invalidate()
 	if s.changed != nil {
 		close(s.changed)
 	}
@@ -115,7 +117,7 @@ func newAgentKeyService(registry *agentRegistry, opener agentStoreOpener) (*agen
 		return nil, errAgentDenied
 	}
 	return &agentKeyService{registry: snapshot, byBlob: byBlob, fingerprint: fingerprint,
-		source: registry.source, open: opener, changed: make(chan struct{}), jobs: make(chan struct{}, maxAgentSigningJobs)}, nil
+		cache: newAgentSignerCache(), source: registry.source, open: opener, changed: make(chan struct{}), jobs: make(chan struct{}, maxAgentSigningJobs)}, nil
 }
 
 // refresh reads only owner-controlled public configuration. Changed, removed or
@@ -264,11 +266,17 @@ func (s *agentKeyService) signBound(ctx context.Context, blob, data []byte, algo
 			return nil, errAgentDenied
 		}
 	}
+	var cached *agentCachedSigner
+	defer func() {
+		if cached != nil {
+			cached.release()
+		}
+	}()
 	// Only fixed error messages cross into upstream protocol logging.
 	defer func() {
 		refreshErr := s.refresh()
 		current, locked := s.signingState()
-		if refreshErr != nil || returnErr != nil || ctx.Err() != nil || locked || current != generation {
+		if refreshErr != nil || returnErr != nil || ctx.Err() != nil || locked || current != generation || (cached != nil && !cached.valid()) {
 			if refreshErr != nil || locked || current != generation {
 				s.debug("signature discarded: registry or lock generation changed")
 			}
@@ -281,26 +289,10 @@ func (s *agentKeyService) signBound(ctx context.Context, blob, data []byte, algo
 			s.debug("sign succeeded")
 		}
 	}()
-	s.debug("sign authorized; opening credential backend")
-	store, err := s.open(ctx, key.record.Backend)
-	if store != nil {
-		defer func() {
-			if err := store.Close(); err != nil {
-				s.debug("sign denied: credential backend cleanup failed")
-				returnErr = errAgentDenied
-			}
-		}()
-	}
-	if err != nil || store == nil {
-		s.debug("sign denied: credential backend open failed")
-		return nil, errAgentDenied
-	}
-	s.debug("credential backend opened; reading registered key")
-	err = registry.withKey(ctx, key.record.ID, store, func(signer ssh.Signer) error {
+	sign := func(signer ssh.Signer) error {
 		if err := revalidate(); err != nil {
 			return err
 		}
-		s.debug("credential read and private-key validation succeeded")
 		algorithmSigner, ok := signer.(ssh.AlgorithmSigner)
 		if !ok {
 			return errAgentDenied
@@ -310,9 +302,108 @@ func (s *agentKeyService) signBound(ctx context.Context, blob, data []byte, algo
 		if err != nil || signature == nil || signature.Format != algorithm {
 			return errAgentDenied
 		}
-		// Also catch inconsistent provider private-key encodings before releasing a
-		// result. Verification uses the trusted registered public key.
 		return key.publicKey.Verify(data, signature)
+	}
+	cacheKey := string(blob) // Registry generation binds its exact reference and policy.
+	useCached := func(entry *agentCachedSigner) error {
+		cached = entry
+		go func() {
+			select {
+			case <-entry.done:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+		if err := entry.check(ctx); err != nil {
+			return err
+		}
+		entry.signMutex.Lock()
+		err := sign(entry.signer)
+		entry.signMutex.Unlock()
+		if err != nil {
+			return err
+		}
+		return entry.check(ctx)
+	}
+	if s.cache.enabled() {
+		if entry := s.cache.acquire(cacheKey, generation); entry != nil {
+			s.debug("signer cache hit; checking provider readiness")
+			err = useCached(entry)
+			if err != nil {
+				s.debug("cached signing denied or provider invalidated")
+			}
+			return signature, err
+		}
+	}
+	s.debug("sign authorized; opening credential backend")
+	store, err := s.open(ctx, key.record.Backend)
+	if store != nil {
+		defer func() {
+			if err := store.Close(); err != nil {
+				if cached != nil {
+					cached.invalidate()
+				}
+				s.debug("sign denied: credential backend cleanup failed")
+				returnErr = errAgentDenied
+			}
+		}()
+	}
+	if err != nil || store == nil {
+		return nil, errAgentDenied
+	}
+	var lease credential.KeyCacheLease
+	if s.cache.enabled() {
+		if provider, ok := store.(credential.KeyCacheProvider); ok && s.cache.reserve() {
+			lease, err = provider.WatchKey(ctx, credential.Ref{Backend: key.record.Backend, ID: key.record.Reference, Collection: key.record.Collection})
+			if err != nil {
+				if lease != nil {
+					_ = lease.Close()
+				}
+				<-s.cache.slots
+				return nil, errAgentDenied
+			}
+			if lease == nil {
+				<-s.cache.slots
+				return nil, errAgentDenied
+			}
+			defer func() {
+				if lease != nil {
+					_ = lease.Close()
+					<-s.cache.slots
+				}
+			}()
+			if err = lease.Check(ctx); err != nil {
+				return nil, errAgentDenied
+			}
+		} else {
+			s.cache.bypasses.Add(1)
+			s.debug("signer cache bypass: provider unavailable for caching or capacity reached")
+		}
+	}
+	s.debug("credential backend opened; reading registered key")
+	err = registry.withKey(ctx, key.record.ID, store, func(signer ssh.Signer) error {
+		if err := revalidate(); err != nil {
+			return err
+		}
+		s.debug("credential read and private-key validation succeeded")
+		if lease != nil {
+			if err := lease.Check(ctx); err != nil {
+				return err
+			}
+			// Publish atomically with policy/lock transitions. No provider/UI calls
+			// occur under stateMutex; the monitor closes its own connection on eviction.
+			s.stateMutex.RLock()
+			if s.generation == generation && !s.locked && !s.invalid && ctx.Err() == nil {
+				cached = s.cache.insert(cacheKey, generation, signer, lease)
+			}
+			s.stateMutex.RUnlock()
+			if cached == nil {
+				return errAgentDenied
+			}
+			lease = nil // Ownership moved to the cache monitor.
+			return useCached(cached)
+		}
+		return sign(signer)
 	}, func(data []byte, public ssh.PublicKey) (ssh.Signer, error) {
 		if err := revalidate(); err != nil {
 			return nil, err

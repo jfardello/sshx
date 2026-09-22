@@ -42,48 +42,11 @@ func (s *secretServiceStore) KeyMaterial(ctx context.Context, ref credentialRef)
 		return nil, err
 	}
 	scoped := &secretServiceStore{transport: s.transport.WithContext(ctx).WithOwner(owner)}
-	collection, err := scoped.readCollectionAlias(ref.Collection)
+	collection, match, err := scoped.keyLocation(ref)
 	if err != nil {
 		return nil, err
 	}
-	if collection == secretServiceNoPromptPath {
-		return nil, errCredentialReference
-	}
-	locked, err := scoped.boolProperty(collection, secretServiceCollectionInterface+".Locked")
-	if err != nil {
-		return nil, err
-	}
-	if locked {
-		return nil, errCredentialLocked
-	}
-	items, err := scoped.objectPathsProperty(collection, secretServiceCollectionInterface+".Items")
-	if err != nil {
-		return nil, err
-	}
-	if len(items) > 16384 {
-		return nil, errCredentialTooLarge
-	}
-	var match dbus.ObjectPath
 	required := map[string]string{"service": "sshx", "sshx.type": "ssh-key", "sshx.schema": "1", "sshx.id": ref.ID}
-	for _, item := range items {
-		if requireSecretServiceObjectPath(item, "item") != nil {
-			return nil, errCredentialReference
-		}
-		attrs, err := scoped.attributesProperty(item, secretServiceItemInterface+".Attributes")
-		if err != nil {
-			return nil, err
-		}
-		if attrs["sshx.id"] != ref.ID {
-			continue
-		}
-		if !attributesMatch(attrs, required) || match != "" {
-			return nil, errCredentialReference
-		}
-		match = item
-	}
-	if match == "" {
-		return nil, errCredentialReference
-	}
 	data, err = scoped.secret(credentialRef{Backend: credentialBackendSecretService, ID: string(match)}, false)
 	if err != nil {
 		return nil, err
@@ -138,4 +101,51 @@ func keyProviderError(err error) error {
 		}
 	}
 	return err
+}
+
+// keyLocation resolves exact public metadata and verifies collection readiness.
+func (s *secretServiceStore) keyLocation(ref credentialRef) (dbus.ObjectPath, dbus.ObjectPath, error) {
+	collection, err := s.readCollectionAlias(ref.Collection)
+	if err != nil {
+		return "", "", err
+	}
+	if collection == secretServiceNoPromptPath {
+		return "", "", errCredentialReference
+	}
+	locked, err := s.boolProperty(collection, secretServiceCollectionInterface+".Locked")
+	if err != nil {
+		return "", "", err
+	}
+	if locked {
+		return "", "", errCredentialLocked
+	}
+	items, err := s.objectPathsProperty(collection, secretServiceCollectionInterface+".Items")
+	if err != nil {
+		return "", "", err
+	}
+	if len(items) > 16384 {
+		return "", "", errCredentialTooLarge
+	}
+	var match dbus.ObjectPath
+	required := map[string]string{"service": "sshx", "sshx.type": "ssh-key", "sshx.schema": "1", "sshx.id": ref.ID}
+	for _, item := range items {
+		if requireSecretServiceObjectPath(item, "item") != nil {
+			return "", "", errCredentialReference
+		}
+		attrs, err := s.attributesProperty(item, secretServiceItemInterface+".Attributes")
+		if err != nil {
+			return "", "", err
+		}
+		if attrs["sshx.id"] != ref.ID {
+			continue
+		}
+		if !attributesMatch(attrs, required) || match != "" {
+			return "", "", errCredentialReference
+		}
+		match = item
+	}
+	if match == "" {
+		return "", "", errCredentialReference
+	}
+	return collection, match, nil
 }

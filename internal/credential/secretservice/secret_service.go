@@ -51,7 +51,7 @@ type dbusSecretServiceTransport struct {
 
 // The connection outlives the operation context after successful setup. During
 // setup, cancellation closes an authenticated or still-authenticating connection.
-func connectSecretServiceTransport(ctx context.Context) (secretServiceTransport, error) {
+func connectSecretServiceTransport(ctx context.Context, options ...dbus.ConnOption) (secretServiceTransport, error) {
 	ctx, timeout := context.WithTimeout(ctx, credentialOperationTimeout)
 	defer timeout()
 	if err := ctx.Err(); err != nil {
@@ -65,7 +65,7 @@ func connectSecretServiceTransport(ctx context.Context) (secretServiceTransport,
 	}
 	results := make(chan result)
 	go func() {
-		conn, err := dbus.ConnectSessionBus(dbus.WithContext(connectionContext))
+		conn, err := dbus.ConnectSessionBus(append(options, dbus.WithContext(connectionContext))...)
 		select {
 		case results <- result{conn, err}:
 		case <-ctx.Done():

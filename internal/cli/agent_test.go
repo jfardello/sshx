@@ -408,3 +408,12 @@ func TestAgentPromptHelperValidation(t *testing.T) {
 		t.Fatal("untrusted prompt helper accepted")
 	}
 }
+
+func TestAgentCacheTTLValidation(t *testing.T) {
+	agentCLIHome(t)
+	for _, ttl := range []string{"-1s", "6m", "invalid"} {
+		if _, err := agentCLIExecute(context.Background(), "agent", "run", "--cache-ttl="+ttl, "--", "sh", "-c", "exit 0"); err == nil {
+			t.Fatal("invalid cache TTL accepted", ttl)
+		}
+	}
+}
