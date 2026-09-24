@@ -118,6 +118,14 @@ jobs:
           env SSHX_AGENT_OPENSSH_INTEGRATION=1
           go test -race -run '^(TestAgentOpenSSHIntegration|TestAgentDestinationOpenSSHIntegration|TestAgentSSHAddIntegration)$' -count=1 ./...
 
+      - name: Run pinned OpenSSH forwarding tests
+        working-directory: candidate
+        run: |
+          openssh_dir=$(sh testdata/build-forwarding-openssh.sh)
+          trap 'rm -rf "$openssh_dir"' EXIT
+          SSHX_AGENT_FORWARDING_OPENSSH_DIR="$openssh_dir" \
+            go test -race -run '^TestAgentForwarding' -count=1 ./internal/agent
+
       - name: Run race tests
         working-directory: candidate
         run: go test -race ./...

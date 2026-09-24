@@ -32,22 +32,23 @@ var (
 type agentStoreOpener func(context.Context, credentialBackend) (credential.KeyStore, error)
 
 type agentKeyService struct {
-	diagnostics atomic.Pointer[log.Logger]
-	registry    *agentRegistry
-	byBlob      map[string]registeredAgentKey
-	open        agentStoreOpener
-	jobs        chan struct{}
-	stateMutex  sync.RWMutex
-	locked      bool
-	generation  uint64
-	reloadMutex sync.Mutex
-	source      string
-	fingerprint [32]byte
-	invalid     bool
-	prompt      *agentPrompter
-	changed     chan struct{}
-	cache       *agentSignerCache
-	mutations   *agentMutationState
+	diagnostics       atomic.Pointer[log.Logger]
+	registry          *agentRegistry
+	byBlob            map[string]registeredAgentKey
+	open              agentStoreOpener
+	jobs              chan struct{}
+	stateMutex        sync.RWMutex
+	locked            bool
+	generation        uint64
+	reloadMutex       sync.Mutex
+	source            string
+	fingerprint       [32]byte
+	invalid           bool
+	prompt            *agentPrompter
+	changed           chan struct{}
+	cache             *agentSignerCache
+	mutations         *agentMutationState
+	forwardingEnabled bool
 }
 
 // The internal lifecycle gate is separate from connection provenance. Wire lock
@@ -172,16 +173,12 @@ func (s *agentKeyService) lookup(blob []byte) (registeredAgentKey, bool) {
 	return key, ok && !s.invalid && !s.mutationFaultLocked()
 }
 func (s *agentKeyService) list(ctx context.Context, bindings *agentBindingState) ([]*sshagent.Key, error) {
-	if bindings != nil && (bindings.poisoned || bindings.forwarded) {
-		s.debug("request denied: poisoned or forwarded connection")
-		return nil, errAgentDenied
-	}
 	if err := s.refresh(); err != nil {
 		return nil, errAgentDenied
 	}
 	s.stateMutex.RLock()
 	defer s.stateMutex.RUnlock()
-	if ctx.Err() != nil || s.invalid || s.mutationFaultLocked() {
+	if ctx.Err() != nil || s.invalid || s.mutationFaultLocked() || (bindings != nil && (bindings.poisoned || (bindings.forwarded && !s.forwardingEnabled))) {
 		return nil, errAgentDenied
 	}
 	result := []*sshagent.Key{}
@@ -189,13 +186,13 @@ func (s *agentKeyService) list(ctx context.Context, bindings *agentBindingState)
 		return result, nil
 	}
 	for _, key := range s.registry.keys {
-		if key.record.Enabled && !s.suppressedLocked(string(key.publicKey.Marshal())) && (key.policy == nil || key.policy.visible(bindings)) {
+		if key.record.Enabled && !s.suppressedLocked(string(key.publicKey.Marshal())) && agentIdentityVisible(key, bindings) {
 			result = append(result, &sshagent.Key{Format: key.publicKey.Type(), Blob: key.publicKey.Marshal(), Comment: key.record.Comment})
 		}
 	}
 	if s.mutations != nil {
 		for _, entry := range s.mutations.overlay {
-			if !entry.retired && (entry.expires.IsZero() || time.Now().Before(entry.expires)) && (entry.key.policy == nil || entry.key.policy.visible(bindings)) {
+			if !entry.retired && (entry.expires.IsZero() || time.Now().Before(entry.expires)) && agentIdentityVisible(entry.key, bindings) {
 				result = append(result, &sshagent.Key{Format: entry.key.publicKey.Type(), Blob: entry.key.publicKey.Marshal(), Comment: entry.key.record.Comment})
 			}
 		}
@@ -214,6 +211,7 @@ func (s *agentKeyService) signBound(ctx context.Context, blob, data []byte, algo
 	generation, locked, invalid := s.generation, s.locked, s.invalid || s.mutationFaultLocked()
 	registry := s.registry
 	prompt, changed := s.prompt, s.changed
+	forwardingEnabled := s.forwardingEnabled
 	key, imported, ok := s.identityLocked(string(blob))
 	if imported != nil {
 		imported.users++
@@ -227,8 +225,8 @@ func (s *agentKeyService) signBound(ctx context.Context, blob, data []byte, algo
 		s.debug("sign denied: locked, unavailable identity or invalid algorithm/payload size")
 		return nil, errAgentDenied
 	}
-	if bindings != nil && (bindings.poisoned || bindings.forwarded) {
-		s.debug("request denied: poisoned or forwarded connection")
+	if bindings != nil && (bindings.poisoned || (bindings.forwarded && (!forwardingEnabled || key.policy == nil))) {
+		s.debug("request denied: poisoned connection or forwarding not authorized")
 		return nil, errAgentDenied
 	}
 	if key.policy != nil && !key.policy.authorize(bindings, blob, data, algorithm) {

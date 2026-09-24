@@ -28,10 +28,13 @@ func newAgentCommand(deps dependencies) *cobra.Command {
 	var promptHelper string
 	var cacheTTL time.Duration
 	var allowMutations bool
+	var allowForwarding bool
+	root.PersistentFlags().BoolVar(&allowForwarding, "allow-forwarding", false, "allow verified forwarding for destination-constrained keys only")
 	var stateFile string
 	root.PersistentFlags().BoolVar(&allowMutations, "allow-key-mutations", false, "allow volatile ssh-add keys, removal and locking")
 	root.PersistentFlags().StringVar(&stateFile, "state-file", "", "absolute path to durable agent lock/suppression state")
 	configuredContext := func(ctx context.Context) context.Context {
+		ctx = context.WithValue(ctx, agentForwardingContext{}, allowForwarding)
 		ctx = context.WithValue(ctx, agentCacheTTLContext{}, cacheTTL)
 		ctx = context.WithValue(ctx, agentPromptHelperContext{}, promptHelper)
 		return context.WithValue(ctx, agentMutationContext{}, agentMutationOptions{stateFile, allowMutations})
@@ -198,6 +201,7 @@ func agentSocketPath(explicit string, create bool) (string, error) {
 
 type agentPromptHelperContext struct{}
 type agentCacheTTLContext struct{}
+type agentForwardingContext struct{}
 type agentMutationContext struct{}
 type agentMutationOptions struct {
 	path    string
@@ -251,6 +255,10 @@ func startAgentMode(ctx context.Context, socket string, activation bool, diagnos
 				return nil, err
 			}
 		}
+	}
+	if err == nil {
+		enabled, _ := ctx.Value(agentForwardingContext{}).(bool)
+		server.SetForwardingEnabled(enabled)
 	}
 	if err == nil && len(diagnostics) > 0 {
 		server.SetDiagnostics(diagnostics[0])

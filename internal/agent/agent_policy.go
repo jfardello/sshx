@@ -101,8 +101,7 @@ func policyText(value string, max int) bool {
 }
 
 // visible checks the bound path without a username or a credential-store read.
-// Forwarding visibility additionally requires an allowed onward edge; the
-// current connection admission gate still denies all forwarded operations.
+// Forwarding-only visibility additionally requires an allowed onward edge.
 func (p *agentPolicy) visible(b *agentBindingState) bool {
 	if b == nil || b.poisoned || len(b.chain) == 0 {
 		return false

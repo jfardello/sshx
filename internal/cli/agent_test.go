@@ -440,3 +440,10 @@ func TestAgentMutationCLIState(t *testing.T) {
 		t.Fatal("relative state accepted")
 	}
 }
+
+func TestAgentForwardingFlag(t *testing.T) {
+	agentCLIHome(t)
+	if _, err := agentCLIExecute(context.Background(), "agent", "run", "--allow-forwarding", "--", "/bin/true"); err != nil {
+		t.Fatal("forwarding flag did not reach agent run", err)
+	}
+}

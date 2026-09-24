@@ -89,12 +89,16 @@ func (a *agentConnection) Extension(name string, contents []byte) ([]byte, error
 		a.keys.debug("binding denied: invalid proof, sequence or canceled connection")
 		return nil, errAgentDenied
 	}
-	if a.bindings.forwarded {
+	if a.bindings.forwarded && !a.keys.forwardingAllowed() {
 		a.keys.debug("binding denied: forwarding disabled")
 		a.denied = true
 		return nil, errAgentDenied
 	}
-	a.keys.debug("direct session binding accepted")
+	if a.bindings.forwarded {
+		a.keys.debug("forwarded session binding accepted")
+	} else {
+		a.keys.debug("direct session binding accepted")
+	}
 	return []byte{6}, nil
 }
 func agentWireString(data []byte) (value, rest []byte, ok bool) {

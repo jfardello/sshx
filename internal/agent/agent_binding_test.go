@@ -412,10 +412,14 @@ func FuzzAgentBinding(f *testing.F) {
 				}
 			}
 		}
-		a := &agentConnection{ctx: context.Background()}
-		reply, _ := dispatchAgentFrame(a, bindingFrame(first))
-		if len(reply) != 5 || binary.BigEndian.Uint32(reply[:4]) != 1 {
-			t.Fatal("bad binding response")
+		for _, service := range []*agentKeyService{nil, {forwardingEnabled: true}} {
+			a := &agentConnection{ctx: context.Background(), keys: service}
+			for _, payload := range [][]byte{first, second, first} {
+				reply, _ := dispatchAgentFrame(a, bindingFrame(payload))
+				if len(reply) != 5 || binary.BigEndian.Uint32(reply[:4]) != 1 {
+					t.Fatal("bad binding response")
+				}
+			}
 		}
 	})
 }
