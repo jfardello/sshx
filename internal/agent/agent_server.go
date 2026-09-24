@@ -104,7 +104,15 @@ func newAgentServer(socketPath string, registry *agentRegistry, opener agentStor
 	return server, nil
 }
 func openAgentDirectory(socketPath string) (int, error) {
-	if !filepath.IsAbs(socketPath) || filepath.Clean(socketPath) != socketPath || len(socketPath) > 100 {
+	if len(socketPath) > 100 {
+		return -1, errAgentSocket
+	}
+	return openAgentPrivateDirectory(socketPath)
+}
+
+// openAgentPrivateDirectory verifies and retains the parent of a private file.
+func openAgentPrivateDirectory(socketPath string) (int, error) {
+	if !filepath.IsAbs(socketPath) || filepath.Clean(socketPath) != socketPath {
 		return -1, errAgentSocket
 	}
 	dir := filepath.Dir(socketPath)
@@ -267,6 +275,7 @@ func (s *agentServer) Close() error {
 		s.mutex.Unlock()
 		s.workers.Wait()
 		s.keys.cache.close()
+		s.keys.closeMutations()
 		if s.ownsSocket {
 			var current unix.Stat_t
 			if err := unix.Fstatat(s.directoryFD, s.socketName, &current, unix.AT_SYMLINK_NOFOLLOW); err == nil && sameAgentSocket(s.socketStat, current) {

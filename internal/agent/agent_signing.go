@@ -9,6 +9,7 @@ import (
 	"log"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/jfardello/sshx/internal/credential"
 	"golang.org/x/crypto/ssh"
@@ -46,11 +47,11 @@ type agentKeyService struct {
 	prompt      *agentPrompter
 	changed     chan struct{}
 	cache       *agentSignerCache
+	mutations   *agentMutationState
 }
 
-// The lifecycle lock gate is separate from connection provenance. Public lock
-// commands/password handling remain deferred; future management must use this
-// transition rather than replacing connection adapters or their bindings.
+// The internal lifecycle gate is separate from connection provenance. Wire lock
+// operations additionally persist their verifier before publishing the transition.
 func (s *agentKeyService) setLocked(locked bool) {
 	s.stateMutex.Lock()
 	defer s.stateMutex.Unlock()
@@ -153,6 +154,11 @@ func (s *agentKeyService) replaceRegistry(registry *agentRegistry) error {
 	s.stateMutex.Lock()
 	defer s.stateMutex.Unlock()
 	if s.invalid || fingerprint != s.fingerprint {
+		if s.mutations != nil {
+			for blob, entry := range s.mutations.overlay {
+				s.retireImportedLocked(blob, entry)
+			}
+		}
 		s.advanceGeneration()
 		s.registry, s.byBlob, s.fingerprint = snapshot, byBlob, fingerprint
 	}
@@ -162,8 +168,8 @@ func (s *agentKeyService) replaceRegistry(registry *agentRegistry) error {
 func (s *agentKeyService) lookup(blob []byte) (registeredAgentKey, bool) {
 	s.stateMutex.RLock()
 	defer s.stateMutex.RUnlock()
-	key, ok := s.byBlob[string(blob)]
-	return key, ok && !s.invalid
+	key, _, ok := s.identityLocked(string(blob))
+	return key, ok && !s.invalid && !s.mutationFaultLocked()
 }
 func (s *agentKeyService) list(ctx context.Context, bindings *agentBindingState) ([]*sshagent.Key, error) {
 	if bindings != nil && (bindings.poisoned || bindings.forwarded) {
@@ -175,7 +181,7 @@ func (s *agentKeyService) list(ctx context.Context, bindings *agentBindingState)
 	}
 	s.stateMutex.RLock()
 	defer s.stateMutex.RUnlock()
-	if ctx.Err() != nil || s.invalid {
+	if ctx.Err() != nil || s.invalid || s.mutationFaultLocked() {
 		return nil, errAgentDenied
 	}
 	result := []*sshagent.Key{}
@@ -183,8 +189,15 @@ func (s *agentKeyService) list(ctx context.Context, bindings *agentBindingState)
 		return result, nil
 	}
 	for _, key := range s.registry.keys {
-		if key.record.Enabled && (key.policy == nil || key.policy.visible(bindings)) {
+		if key.record.Enabled && !s.suppressedLocked(string(key.publicKey.Marshal())) && (key.policy == nil || key.policy.visible(bindings)) {
 			result = append(result, &sshagent.Key{Format: key.publicKey.Type(), Blob: key.publicKey.Marshal(), Comment: key.record.Comment})
+		}
+	}
+	if s.mutations != nil {
+		for _, entry := range s.mutations.overlay {
+			if !entry.retired && (entry.expires.IsZero() || time.Now().Before(entry.expires)) && (entry.key.policy == nil || entry.key.policy.visible(bindings)) {
+				result = append(result, &sshagent.Key{Format: entry.key.publicKey.Type(), Blob: entry.key.publicKey.Marshal(), Comment: entry.key.record.Comment})
+			}
 		}
 	}
 	return result, nil
@@ -197,12 +210,18 @@ func (s *agentKeyService) signBound(ctx context.Context, blob, data []byte, algo
 	if err := s.refresh(); err != nil {
 		return nil, errAgentDenied
 	}
-	s.stateMutex.RLock()
-	generation, locked, invalid := s.generation, s.locked, s.invalid
+	s.stateMutex.Lock()
+	generation, locked, invalid := s.generation, s.locked, s.invalid || s.mutationFaultLocked()
 	registry := s.registry
 	prompt, changed := s.prompt, s.changed
-	key, ok := s.byBlob[string(blob)]
-	s.stateMutex.RUnlock()
+	key, imported, ok := s.identityLocked(string(blob))
+	if imported != nil {
+		imported.users++
+	}
+	s.stateMutex.Unlock()
+	if imported != nil {
+		defer s.releaseImported(imported)
+	}
 	s.debug("sign request received")
 	if locked || invalid || !ok || len(data) > maxAgentFrameBytes || !agentAlgorithmAllowed(key.publicKey.Type(), algorithm) {
 		s.debug("sign denied: locked, unavailable identity or invalid algorithm/payload size")
@@ -245,7 +264,7 @@ func (s *agentKeyService) signBound(ctx context.Context, blob, data []byte, algo
 			return errAgentDenied
 		}
 		current, locked := s.signingState()
-		if locked || current != generation {
+		if locked || current != generation || !s.importedValid(imported) {
 			return errAgentDenied
 		}
 		return nil
@@ -276,7 +295,7 @@ func (s *agentKeyService) signBound(ctx context.Context, blob, data []byte, algo
 	defer func() {
 		refreshErr := s.refresh()
 		current, locked := s.signingState()
-		if refreshErr != nil || returnErr != nil || ctx.Err() != nil || locked || current != generation || (cached != nil && !cached.valid()) {
+		if refreshErr != nil || returnErr != nil || ctx.Err() != nil || locked || current != generation || (cached != nil && !cached.valid()) || !s.importedValid(imported) {
 			if refreshErr != nil || locked || current != generation {
 				s.debug("signature discarded: registry or lock generation changed")
 			}
@@ -303,6 +322,12 @@ func (s *agentKeyService) signBound(ctx context.Context, blob, data []byte, algo
 			return errAgentDenied
 		}
 		return key.publicKey.Verify(data, signature)
+	}
+	if imported != nil {
+		imported.signMutex.Lock()
+		returnErr = sign(imported.signer)
+		imported.signMutex.Unlock()
+		return signature, returnErr
 	}
 	cacheKey := string(blob) // Registry generation binds its exact reference and policy.
 	useCached := func(entry *agentCachedSigner) error {

@@ -30,6 +30,7 @@ func agentCLIHome(t *testing.T) string {
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	t.Setenv("XDG_RUNTIME_DIR", dir)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
 	return dir
 }
 
@@ -415,5 +416,27 @@ func TestAgentCacheTTLValidation(t *testing.T) {
 		if _, err := agentCLIExecute(context.Background(), "agent", "run", "--cache-ttl="+ttl, "--", "sh", "-c", "exit 0"); err == nil {
 			t.Fatal("invalid cache TTL accepted", ttl)
 		}
+	}
+}
+
+func TestAgentMutationCLIState(t *testing.T) {
+	dir := agentCLIHome(t)
+	state := filepath.Join(dir, "agent-state.json")
+	ctx := context.WithValue(context.Background(), agentMutationContext{}, agentMutationOptions{path: state, enabled: true})
+	server, err := startAgentMode(ctx, filepath.Join(dir, "agent.sock"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	if _, err := agentCLIExecute(context.Background(), "agent", "reset-state", "--state-file", state); err == nil {
+		t.Fatal("reset running state succeeded")
+	}
+	server.Close()
+	output, err := agentCLIExecute(context.Background(), "agent", "reset-state", "--state-file", state)
+	if err != nil || !strings.Contains(output, "state reset") {
+		t.Fatal("reset", output, err)
+	}
+	if _, err := agentCLIExecute(context.Background(), "agent", "reset-state", "--state-file", "relative"); err == nil {
+		t.Fatal("relative state accepted")
 	}
 }

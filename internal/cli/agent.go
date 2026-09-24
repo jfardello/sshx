@@ -27,6 +27,15 @@ func newAgentCommand(deps dependencies) *cobra.Command {
 	var verbose bool
 	var promptHelper string
 	var cacheTTL time.Duration
+	var allowMutations bool
+	var stateFile string
+	root.PersistentFlags().BoolVar(&allowMutations, "allow-key-mutations", false, "allow volatile ssh-add keys, removal and locking")
+	root.PersistentFlags().StringVar(&stateFile, "state-file", "", "absolute path to durable agent lock/suppression state")
+	configuredContext := func(ctx context.Context) context.Context {
+		ctx = context.WithValue(ctx, agentCacheTTLContext{}, cacheTTL)
+		ctx = context.WithValue(ctx, agentPromptHelperContext{}, promptHelper)
+		return context.WithValue(ctx, agentMutationContext{}, agentMutationOptions{stateFile, allowMutations})
+	}
 	root.PersistentFlags().DurationVar(&cacheTTL, "cache-ttl", 0, "absolute signer cache lifetime (0 disables; maximum 5m)")
 	root.PersistentFlags().StringVar(&promptHelper, "prompt-helper", "", "absolute path to trusted local confirmation/passphrase helper")
 	root.PersistentFlags().BoolVar(&verbose, "verbose", false, "write secret-safe agent diagnostics to stderr")
@@ -57,7 +66,7 @@ func newAgentCommand(deps dependencies) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		server, err := startAgentMode(context.WithValue(context.WithValue(ctx, agentCacheTTLContext{}, cacheTTL), agentPromptHelperContext{}, promptHelper), name, activation, diagnosticWriter(cmd))
+		server, err := startAgentMode(configuredContext(ctx), name, activation, diagnosticWriter(cmd))
 		if err != nil {
 			return err
 		}
@@ -113,7 +122,7 @@ func newAgentCommand(deps dependencies) *cobra.Command {
 		if cmd.ArgsLenAtDash() != 0 {
 			return errors.New("use agent run -- command [args...]")
 		}
-		return runWithAgent(context.WithValue(context.WithValue(cmd.Context(), agentCacheTTLContext{}, cacheTTL), agentPromptHelperContext{}, promptHelper), args, os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr(), diagnosticWriter(cmd))
+		return runWithAgent(configuredContext(cmd.Context()), args, os.Stdin, cmd.OutOrStdout(), cmd.ErrOrStderr(), diagnosticWriter(cmd))
 	}
 	stop := &cobra.Command{Use: "stop", Short: "Stop the systemd socket and service, or explain foreground shutdown", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -123,7 +132,22 @@ func newAgentCommand(deps dependencies) *cobra.Command {
 			return errors.New("stop a foreground agent with Ctrl-C; use agent stop --systemd for the systemd user units")
 		}}
 	stop.Flags().BoolVar(&stopSystemd, "systemd", false, "stop the user socket before stopping its service")
-	root.AddCommand(start, env, status, run, stop)
+	reset := &cobra.Command{Use: "reset-state", Short: "Reset lock and suppression state while the agent is stopped", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		path := stateFile
+		if path == "" {
+			var err error
+			path, err = agent.DefaultMutationStatePath()
+			if err != nil {
+				return err
+			}
+		}
+		if err := agent.ResetMutationState(path); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), "Agent lock and suppression state reset.")
+		return err
+	}}
+	root.AddCommand(start, env, status, run, stop, reset)
 	return root
 }
 
@@ -174,6 +198,11 @@ func agentSocketPath(explicit string, create bool) (string, error) {
 
 type agentPromptHelperContext struct{}
 type agentCacheTTLContext struct{}
+type agentMutationContext struct{}
+type agentMutationOptions struct {
+	path    string
+	enabled bool
+}
 
 func startAgent(ctx context.Context, socket string) (*agent.Server, error) {
 	return startAgentMode(ctx, socket, false)
@@ -206,6 +235,21 @@ func startAgentMode(ctx context.Context, socket string, activation bool, diagnos
 		if err = server.SetCacheTTL(ttl); err != nil {
 			_ = server.Close()
 			return nil, err
+		}
+	}
+	if err == nil {
+		if options, ok := ctx.Value(agentMutationContext{}).(agentMutationOptions); ok {
+			path := options.path
+			if path == "" {
+				path, err = agent.DefaultMutationStatePath()
+			}
+			if err == nil {
+				err = server.ConfigureMutations(path, options.enabled)
+			}
+			if err != nil {
+				_ = server.Close()
+				return nil, err
+			}
 		}
 	}
 	if err == nil && len(diagnostics) > 0 {

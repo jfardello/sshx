@@ -68,6 +68,9 @@ func (a *agentConnection) SignWithFlags(key ssh.PublicKey, data []byte, flags ag
 	}
 	return a.keys.signBound(a.ctx, blob, data, algorithm, &a.bindings)
 }
+
+// Mutations are handled exclusively by the raw frame gate, preserving every
+// constraint and validating private fields before the upstream parser runs.
 func (*agentConnection) Add(agent.AddedKey) error       { return errAgentDenied }
 func (*agentConnection) Remove(ssh.PublicKey) error     { return errAgentDenied }
 func (*agentConnection) RemoveAll() error               { return errAgentDenied }
@@ -123,6 +126,8 @@ func dispatchAgentFrame(a *agentConnection, body []byte) ([]byte, error) {
 		return failure, nil
 	}
 	switch body[0] {
+	case 17, 18, 19, 22, 23, 25:
+		return a.dispatchMutation(body)
 	case agentListCode:
 		if len(body) != 1 {
 			return failure, errAgentProtocol
