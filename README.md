@@ -30,11 +30,11 @@ Download a build from
 [GitHub Releases](https://github.com/jfardello/sshx/releases/latest) and add it
 to your `PATH`. Releases currently target Linux AMD64 and Darwin ARM64.
 
-To build from source, install Go 1.24 or later and run:
+To build from source, install Go 1.26 or later and run:
 
 ```sh
 go test ./...
-go build -o sshx .
+go build -o sshx ./cmd/sshx
 install -m 0755 sshx "${HOME}/.local/bin/sshx"
 ```
 

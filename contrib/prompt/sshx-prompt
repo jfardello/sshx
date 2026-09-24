@@ -1,0 +1,55 @@
+#!/usr/bin/python3 -I
+"""Optional local Tk UI for sshx's private prompt-helper protocol."""
+import base64
+import json
+import sys
+
+
+def main():
+    import tkinter as tk
+    from tkinter import messagebox, simpledialog
+
+    data = sys.stdin.buffer.read(16385)
+    if len(data) > 16384:
+        return 1
+    request = json.loads(data)
+    if request.get("version") != 1 or request.get("operation") not in ("confirm", "passphrase"):
+        return 1
+    root = tk.Tk()
+    root.withdraw()
+    destination = request["destination"]
+    description = "Key: " + request["key_fingerprint"]
+    if destination["status"] == "verified-session-and-policy":
+        description += "\nApproved host key: " + destination["host_fingerprint"]
+        description += "\nRequested SSH user: " + json.dumps(destination["username"], ensure_ascii=True)
+    else:
+        description += "\nDestination: UNKNOWN (unrestricted signing)"
+    description += "\nAlgorithm: " + request["algorithm"]
+    description += "\nRequest: " + request["request_id"]
+    description += "\nData SHA-256: " + request["data_digest"]
+    response = {"version": 1, "request_id": request["request_id"], "approved": False}
+    if request["operation"] == "confirm":
+        response["approved"] = messagebox.askyesno(
+            "sshx local signing approval", "Allow this ONE signing request?\n\n" + description,
+            parent=root, default=messagebox.NO)
+    else:
+        password = simpledialog.askstring(
+            "sshx local key decryption",
+            "Enter the OpenSSH private-key passphrase.\n"
+            "This decrypts the key; it is not approval for future signing.\n\n" + description,
+            show="*", parent=root)
+        if password:
+            response["approved"] = True
+            response["passphrase"] = base64.b64encode(password.encode("utf-8")).decode("ascii")
+        password = None
+    root.destroy()
+    # Only the private stdout pipe carries a response. Never print diagnostics.
+    sys.stdout.write(json.dumps(response))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception:
+        sys.exit(1)
