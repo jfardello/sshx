@@ -176,7 +176,7 @@ jobs:
           for archive in dist/*.tar.gz; do
             entries="$(tar -tzf "${archive}")"
             grep -qx "README.md" <<< "${entries}"
-            grep -qx "docs/secret-service-smoke-tests.md" <<< "${entries}"
+            grep -qx "docs/development/secret-service-smoke-tests.md" <<< "${entries}"
             grep -qx "sshx" <<< "${entries}"
           done
           cd dist
