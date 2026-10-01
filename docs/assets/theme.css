@@ -1,0 +1,40 @@
+:root { 
+  --theme-color: #156477;
+  --content-max-width: 100%;
+  --sidebar-toggle-width: 5px;
+  img[alt="Logo"] {
+    float: left;
+  }
+ }
+
+body { 
+  font-family: "Noto Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; 
+}
+h1, h2,h3,h4,blockquote>p {
+  font-family: "Roboto", sans-serif;
+}
+aside{
+  font-family: "Roboto Condensed", serif;
+  font-weight: 500;
+}
+.markdown-section { max-width: 880px; padding: 32px 36px 64px; }
+.markdown-section p, .markdown-section li { line-height: 1.75; }
+.markdown-section a, .sidebar a { text-underline-offset: 3px; }
+.markdown-section pre { border-radius: 6px; }
+.markdown-section table { display: block; max-width: 100%; overflow-x: auto; }
+.sidebar .app-name { font-weight: 700; letter-spacing: -.03em; }
+.sidebar-nav > ul > li { margin-top: 14px; }
+:focus-visible { outline: 3px solid #b56b00; outline-offset: 3px; }
+@media (max-width: 768px) {
+  .markdown-section { padding: 24px 18px 48px; }
+  .markdown-section h1 { font-size: 1.85rem; }
+}
+
+.markdown-section code, .markdown-section pre { 
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace; 
+}
+
+.markdown-section {
+  max-width: 80%;
+  padding: 32px 24px 64px;
+}

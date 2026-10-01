@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" width="1000" height="1000" role="img" aria-labelledby="title desc">
+<title id="title">SSHX — Computing Lab</title><desc id="desc">Forest-green academic badge with an ivory X, terminal chevrons and outlined SSHX lettering. Transparent outside the badge.</desc>
+<g transform="translate(500 500) scale(1.12) translate(-627 -593)">
+<circle cx="627" cy="593" r="420" fill="#0D3B29"/>
+<circle cx="627" cy="593" r="397" fill="#FBF8EC"/>
+<circle cx="627" cy="593" r="380" fill="#0D3B29"/>
+<circle cx="627" cy="593" r="366" fill="#FBF8EC"/>
+<circle cx="627" cy="593" r="325" fill="#0D3B29"/>
+<g fill="#FBF8EC"><path d="M402 398H531L670 593 527 784H406L558 593Z"/>
+<path d="M724 398H853L704 579 649 499Z"/>
+<path d="M704 607 846 784H724L648 685Z"/><path d="M340 485H392L488 593 389 732H340V704L417 593 340 512Z"/>
+<path d="M862 485H913V512L833 593 913 704V732H862L763 593Z"/><path d="M480 849Q627 905 775 849L816 931Q627 1020 438 931Z"/></g>
+<g fill="#0D3B29"><path d="M-17-30H17L24-23V-12H10V-17H-10V-6H17L24 1V23L17 30H-17L-24 23V12H-10V17H10V6H-17L-24-1V-23Z" transform="translate(506 907) rotate(18)"/><path d="M-17-30H17L24-23V-12H10V-17H-10V-6H17L24 1V23L17 30H-17L-24 23V12H-10V17H10V6H-17L-24-1V-23Z" transform="translate(585 923) rotate(5)"/><path d="M-24-30H-10V-7H10V-30H24V30H10V7H-10V30H-24Z" transform="translate(665 923) rotate(-5)"/><path d="M-26-30H-9L0-12 9-30H26L9 0 26 30H9L0 12-9 30H-26L-9 0Z" transform="translate(745 908) rotate(-18)"/></g>
+</g></svg>

@@ -141,6 +141,28 @@ func TestAgentOpenSSHIntegration(t *testing.T) {
 			if backend.reads.Load() != 1 {
 				t.Fatalf("private reads = %d; expected agent-only authentication", backend.reads.Load())
 			}
+			// With default identity selection, OpenSSH discovers the registered
+			// key from the agent without a local public/private identity file.
+			discoveredArgs := make([]string, 0, len(args))
+			for i := 0; i < len(args); i++ {
+				if args[i] == "-o" && i+1 < len(args) &&
+					(args[i+1] == "IdentitiesOnly=yes" || strings.HasPrefix(args[i+1], "IdentityFile=") || args[i+1] == "PreferredAuthentications=publickey") {
+					i++
+					continue
+				}
+				discoveredArgs = append(discoveredArgs, args[i])
+			}
+			assertAgentDiscovery := func() {
+				t.Helper()
+				before := backend.reads.Load()
+				if output, err := run("ssh", discoveredArgs...); err != nil || string(output) != "agent-authenticated\n" {
+					t.Fatal("OpenSSH agent identity discovery", err)
+				}
+				if backend.reads.Load() != before+1 {
+					t.Fatal("discovered identity did not use exactly one backend signature")
+				}
+			}
+			assertAgentDiscovery()
 			proxy.mutex.Lock()
 			verified := proxy.verified > 0 && proxy.host != nil && bytes.Equal(proxy.host.Marshal(), hostKey.Marshal()) && proxy.signedSession
 			proxy.mutex.Unlock()
@@ -206,6 +228,7 @@ func TestAgentOpenSSHIntegration(t *testing.T) {
 			if backend.reads.Load() != before+1 {
 				t.Fatal("constrained connection did not use exactly one backend signature")
 			}
+			assertAgentDiscovery()
 			// Exercise actual helper pipes and encrypted backend material with
 			// the real OpenSSH client, independently for every key algorithm.
 			record.Confirm = true
