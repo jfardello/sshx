@@ -1,0 +1,27 @@
+- [Overview](README.md)
+- Getting started
+  - [Installation and first connection](getting-started.md)
+  - [Configuration](configuration.md)
+  - [Credential providers](providers.md)
+- Password authentication
+  - [SSH and SCP](password-authentication.md)
+- Native agent
+  - [First key-based connection](agent/README.md)
+  - [Key registration](agent/registration.md)
+  - [Running the agent](agent/running.md)
+  - [ssh-add compatibility](agent/ssh-add.md)
+  - [Confirmation and passphrases](agent/confirmation.md)
+  - [Destination policies](agent/destination-policies.md)
+  - [Forwarding](agent/forwarding.md)
+  - [Signer cache](agent/caching.md)
+- Operations
+  - [Troubleshooting](troubleshooting.md)
+  - [Security](security.md)
+- Reference
+  - [Commands](reference/commands.md)
+  - [Agent protocol](reference/agent-protocol.md)
+- Development
+  - [Roadmap](development/roadmap.md)
+  - [Architecture](development/architecture.md)
+  - [Testing](development/testing.md)
+  - [Provider smoke tests](development/secret-service-smoke-tests.md)
