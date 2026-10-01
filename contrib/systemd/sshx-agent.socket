@@ -1,0 +1,12 @@
+[Unit]
+Description=sshx SSH agent socket
+
+[Socket]
+ListenStream=%t/sshx-agent/agent.sock
+SocketMode=0600
+DirectoryMode=0700
+Accept=no
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target
