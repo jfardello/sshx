@@ -23,5 +23,8 @@
 - Development
   - [Roadmap](development/roadmap.md)
   - [Architecture](development/architecture.md)
+  - [ADR-0001: Secure updates (draft)](development/adr-0001-secure-updates.md)
+  - [ADR-0002: Age store (draft)](development/adr-0002-age-store.md)
+  - [ADR-0003: Windows contracts (draft)](development/adr-0003-windows-contracts.md)
   - [Testing](development/testing.md)
   - [Provider smoke tests](development/secret-service-smoke-tests.md)

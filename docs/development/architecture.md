@@ -48,3 +48,12 @@ runtime directory.
 
 The [protocol reference](../reference/agent-protocol.md) contains bounds and
 wire details. [Testing](testing.md) describes fixtures and reproducible checks.
+
+## Architecture decisions
+
+- [ADR-0001: Secure file updates and registration semantics](adr-0001-secure-updates.md)
+  — draft proposal for configuration and registry writers; not implemented.
+- [ADR-0002: Importable age store and versioned encrypted format](adr-0002-age-store.md)
+  — draft proposal for the public age library and store format; not implemented.
+- [ADR-0003: Native Windows platform and client contracts](adr-0003-windows-contracts.md)
+  — draft Windows design and feasibility evidence; platform isolation/CI pending.
