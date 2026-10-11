@@ -1,6 +1,6 @@
 # Configuration
 
-## Configuration boundaries
+## Configuration in sshx
 
 | Mechanism | Scope |
 | --- | --- |
@@ -21,8 +21,52 @@ An empty or relative `XDG_CONFIG_HOME` uses the home-directory fallback.
 
 Precedence is **built-in defaults < configuration file < explicit CLI options**.
 A missing or empty file preserves the built-in defaults. sshx reads the file
-once per applicable invocation and does not create or modify it. Changes affect
-future invocations, not running agents.
+once per applicable invocation. Connection and agent commands do not modify it;
+`sshx config` provides explicit edits. Changes affect future invocations, not
+running agents.
+
+## Inspecting and editing settings
+
+```sh
+sshx config path
+sshx config list
+sshx config get agent.cache-ttl --effective
+sshx config set agent.cache-ttl 1m
+sshx config set verbose false
+sshx config set agent.prompt-helper ""
+sshx config unset agent.prompt-helper
+```
+
+`sshx config` lists stored settings; `sshx config key` gets a setting and
+`sshx config key value` sets it. These shorthand forms match `list`, `get`, and
+`set`. Keys use dots for agent settings; underscores are accepted as aliases for
+hyphens, such as `agent.cache_ttl`.
+
+Get/list output quotes values so empty strings and control characters are visible.
+`--effective` includes built-in defaults and marks each value as `file` or
+`default`; it does not include invocation-specific overrides or resolve empty
+socket/state paths. Getting an absent stored setting fails unless `--effective`
+is used. Unset removes the override, unlike storing false, zero, or an empty string.
+`path` and help do not read the file.
+
+Edits preserve comments and unrelated supported settings, though YAML formatting
+may change. Values and the complete document must be valid; backend/scope
+combination checks remain specific to connection invocations. A semantic no-op
+does not rewrite the file.
+
+Writers require an absolute clean destination and reject symlinks in the file or
+ancestors, even when a reader accepts them. Ancestors must be user/root-owned and
+not group/other-writable; root-owned sticky directories are allowed only above
+the immediate parent. Existing config must be user-owned, regular, singly linked,
+and not group/other-writable. New directories use `0700`; replacements and stable
+sibling `.lock` files use `0600`. Existing permissions are not repaired.
+
+Concurrent edits use a short-lived lock; a busy lock fails immediately. Publication
+uses a synced temporary file and atomic replacement, with a final check for
+external changes. A post-replacement sync failure explicitly reports that the
+config was published but durability is uncertain; it must not be retried blindly.
+These guarantees require filesystem locking, atomic rename, and sync support and
+do not prevent every race with noncooperating same-user editors.
 
 ## Password-command defaults
 

@@ -23,6 +23,23 @@ string is replaced by a CLI occurrence; repeated CLI occurrences concatenate.
 A credential named after a subcommand can be selected through explicit `ssh`,
 for example `sshx ssh agent`.
 
+## Persistent configuration
+
+```text
+sshx config [key [value]]
+sshx config get key [--effective]
+sshx config list [--effective]
+sshx config set key value
+sshx config unset key
+sshx config path
+```
+
+With no arguments, `config` lists stored settings; a key reads it, and a key/value
+pair stores it. `--effective` adds defaults and provenance to reads. Dotted agent
+keys accept hyphens or underscores. Values are printed as quoted strings. See
+[configuration editing](../configuration.md#inspecting-and-editing-settings) for
+validation, comment preservation, and secure publication requirements.
+
 ## Agent lifecycle
 
 | Command | Purpose | Command-specific options |
@@ -35,7 +52,8 @@ for example `sshx ssh agent`.
 | `agent reset-state` | Clear lock/suppression while stopped | Shared `--state-file` selection |
 
 The following flags configure an agent started by `start` or `run`. They do not
-reconfigure another running process and are not fields in `config.yaml`.
+reconfigure another running process. Their defaults may be stored in the separate
+`agent` mapping in `config.yaml`; explicit flags override those defaults.
 
 | Flag | Default | Effect |
 | --- | --- | --- |
