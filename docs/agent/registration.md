@@ -76,6 +76,36 @@ enabled state, confirmation requirement, and policy are identical. Such aliases 
 record's identity and comment. Conflicting duplicates reject the whole registry.
 Unknown, duplicate, case-altered, or null JSON fields also reject the registry.
 
+## Writer and live-reload behavior
+
+The internal registry writer accepts public records only; the registration CLI is
+not implemented yet. Callers must finish provider access, private/public-key
+validation, and passphrase prompts before entering the update transaction.
+`agent.ValidateKeyMaterial` shares the signing parser's format, algorithm, size,
+and encrypted OpenSSH KDF limits without prompting or modifying borrowed buffers.
+An envelope public key alone is not sufficient validation.
+
+An identical decoded record is a no-op, including with replacement requested.
+Default/empty optional fields and JSON whitespace do not force a rewrite; destination
+edge and pin order remain significant. Changing an existing ID requires explicit
+replacement. Only that ID is replaced, in its existing position; new IDs append.
+Unrelated records and supported aliases survive, and conflicting aliases reject
+the complete transaction. Initially invalid registries are never repaired implicitly.
+Actual updates emit version 2; an identical version-1 record remains a no-op.
+
+Writers publish complete validated JSON through the shared secure-update operation.
+They reject symlinks, multiply linked targets, and nonprivate registry files; use a
+stable sibling lock that fails immediately when busy; and detect external changes
+before replacement. New directories use `0700` and replacement files use `0600`.
+A post-replacement sync failure reports publication with uncertain durability,
+not rollback. JSON formatting need not survive.
+
+Effective registry changes invalidate cached signers and pending authorization
+generations and retire volatile imports. Persisted lock/suppression state remains
+intact. No-op, formatting-only, and runtime-equivalent alias changes must not
+manufacture an effective change. Registration does not install remote keys,
+modify provider secrets, or reset agent state.
+
 ## Backend contracts
 
 Identity discovery reads public registry data only: no provider calls, secret

@@ -94,12 +94,14 @@ func parseAgentKeyWithPrompt(ctx context.Context, data []byte, public ssh.Public
 	if err := revalidate(); err != nil {
 		return nil, err
 	}
-	private, err := ssh.ParseRawPrivateKeyWithPassphrase(data, passphrase)
-	if err != nil {
-		return nil, errAgentPassphrase
+	signer, err := parseAgentKeyWithPassphrase(data, public, passphrase)
+	if err == errAgentPassphrase {
+		return nil, err
 	}
+	// Preserve the post-decryption authorization check even when the decrypted
+	// private key fails identity or consistency validation.
 	if err := revalidate(); err != nil {
 		return nil, err
 	}
-	return validateRegisteredPrivateKey(private, public)
+	return signer, err
 }
