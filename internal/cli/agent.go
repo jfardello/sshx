@@ -161,7 +161,7 @@ func newAgentCommand(deps dependencies) *cobra.Command {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), "Agent lock and suppression state reset.")
 		return err
 	}}
-	root.AddCommand(start, env, status, run, stop, reset)
+	root.AddCommand(start, env, status, run, stop, reset, newAgentRegisterCommand(deps))
 	return root
 }
 

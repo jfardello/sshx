@@ -4,12 +4,64 @@ Registration associates a public key with an exact existing credential-store ent
 It does not generate keys, install remote authorized_keys, or import private material.
 The native agent reads this registry; password-based SSH/SCP commands do not.
 
+## Register an existing provider key
+
+```sh
+sshx agent register work-key --backend gopass --reference ssh-keys/work-key \
+  --destination alice@server.example --enable
+
+sshx agent register wallet-key --backend secret-service \
+  --reference work-key-001 --collection default --unrestricted-local
+```
+
+The key must already exist in the provider. Backend and reference are explicit;
+Secret Service also requires a collection alias. Neither password-command config
+nor agent lifecycle defaults select registration's backend or policy.
+
+Choose `--unrestricted-local` or one or more `--destination user@host` values,
+never both. Records are disabled unless `--enable` is supplied. `--confirm` requires
+per-request approval when the running agent signs; `--comment` sets public display
+metadata. `--replace` permits changes to the requested ID only and is not a merge:
+all requested metadata/policy values define the replacement, including disabled
+and no-confirmation defaults. Successful output contains only the key fingerprint
+and enabled state.
+
+Destination registration reads only `--known-hosts` (default `~/.ssh/known_hosts`),
+limited to 1 MiB. Existing pins must already be trusted; registration does not fetch
+host keys, resolve aliases through DNS, or read system known-hosts files. Hashed
+entries and multiple supported plain keys are accepted. Missing pins, matching
+revocations or unsupported/certificate keys, malformed input, and CA-only trust
+fail closed. Up to 64 direct edges and 16 pins per destination are supported.
+
+```sh
+sshx agent register work-key --backend gopass --reference ssh-keys/work-key \
+  --destination 'alice@[2001:db8::1]' --port 2222 \
+  --known-hosts /home/alice/.ssh/known_hosts --enable
+```
+
+Every destination needs an exact nonempty username. Embedded ports, wildcards,
+URIs, whitespace, and IPv6 zone identifiers are rejected. One `--port` applies to
+all destinations. The example looks up `[2001:db8::1]:2222` but stores an unbracketed
+host label. Host labels and ports are lookup metadata: signing authorization binds
+host keys and username, **not a TCP port**.
+
+Provider reads are noninteractive; unlock the wallet or GPG keyring separately.
+An encrypted OpenSSH private key then requires its own passphrase through a
+no-echo controlling-terminal prompt, not stdin, CLI arguments, or the agent helper.
+Without a controlling terminal, registration fails with an actionable error.
+The prompt accepts up to 4096 bytes; erase/backspace and kill-line edit hidden
+input. Interrupt, quit, and suspend controls cancel registration rather than
+leaving a suspended process with echo disabled. Terminal settings are restored.
+Provider resources and owned secret buffers are released before registry locking.
+A full private/public pair is validated before any public record is published.
+
 ## Registry
 
 The registry loader reads `$XDG_CONFIG_HOME/sshx/agent.json` when
 `XDG_CONFIG_HOME` is absolute, otherwise `~/.config/sshx/agent.json`.
 A missing file means no registered keys. Existing password commands do not read
-this file. No files or credentials are automatically created or modified.
+this file. Only an explicit registration operation writes the registry; provider
+credentials are never created or modified by registration.
 
 The file must be a regular file owned by the current user, with no group/other
 permissions (`0600` is recommended). Its ancestor directories must be owned by
@@ -78,9 +130,9 @@ Unknown, duplicate, case-altered, or null JSON fields also reject the registry.
 
 ## Writer and live-reload behavior
 
-The internal registry writer accepts public records only; the registration CLI is
-not implemented yet. Callers must finish provider access, private/public-key
-validation, and passphrase prompts before entering the update transaction.
+The internal registry writer accepts public records only. Registration finishes
+provider access, private/public-key validation, and passphrase prompts before
+entering the update transaction.
 `agent.ValidateKeyMaterial` shares the signing parser's format, algorithm, size,
 and encrypted OpenSSH KDF limits without prompting or modifying borrowed buffers.
 An envelope public key alone is not sufficient validation.
@@ -110,8 +162,8 @@ modify provider secrets, or reset agent state.
 
 Identity discovery reads public registry data only: no provider calls, secret
 reads, unlock requests, or prompts. Internal backend metadata searches use a noninteractive default and exact
-attribute matching for Secret Service; there is no agent registration/discovery
-CLI. Password commands explicitly retain their interactive behavior.
+attribute matching for Secret Service. Registration uses an exact reference rather
+than discovery. Password commands explicitly retain their interactive behavior.
 
 A Secret Service key item must carry these nonsecret string attributes:
 

@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/jfardello/sshx/internal/credential"
 	"github.com/spf13/cobra"
 )
 
@@ -25,15 +26,17 @@ type commandOptions struct {
 }
 
 type dependencies struct {
-	ctx                context.Context
-	gopassStore        credentialStore
-	secretServiceStore credentialStoreProvider
-	goos               string
-	loadConfig         func() (optionOverrides, error)
-	runProgram         func(program string, args []string, password []byte) error
-	stdout             io.Writer
-	stderr             io.Writer
-	systemctl          func(context.Context, ...string) ([]byte, error)
+	ctx                    context.Context
+	gopassStore            credentialStore
+	secretServiceStore     credentialStoreProvider
+	goos                   string
+	loadConfig             func() (optionOverrides, error)
+	runProgram             func(program string, args []string, password []byte) error
+	stdout                 io.Writer
+	stderr                 io.Writer
+	systemctl              func(context.Context, ...string) ([]byte, error)
+	openKeyStore           func(context.Context, credential.Backend) (credential.KeyStore, error)
+	registrationPassphrase func(context.Context) ([]byte, error)
 }
 
 func newRootCommand() *cobra.Command {

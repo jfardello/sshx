@@ -51,7 +51,11 @@ func (s *agentServer) ConfigureMutations(path string, enabled bool) error {
 func (s *agentKeyService) mutationAllowed() bool {
 	s.stateMutex.RLock()
 	defer s.stateMutex.RUnlock()
-	return s.mutations != nil && s.mutations.enabled && !s.mutations.failed && !s.invalid
+	if s.mutations == nil || !s.mutations.enabled {
+		s.debug("mutation denied: key mutations are disabled; restart with --allow-key-mutations")
+		return false
+	}
+	return !s.mutations.failed && !s.invalid
 }
 func (s *agentKeyService) suppressedLocked(blob string) bool {
 	return s.mutations != nil && (s.mutations.suppressAll || s.mutations.suppressed[blob])

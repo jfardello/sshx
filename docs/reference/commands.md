@@ -40,6 +40,22 @@ keys accept hyphens or underscores. Values are printed as quoted strings. See
 [configuration editing](../configuration.md#inspecting-and-editing-settings) for
 validation, comment preservation, and secure publication requirements.
 
+## Agent registration
+
+```text
+sshx agent register id --backend gopass|secret-service --reference exact-reference
+  [--collection alias] (--unrestricted-local | --destination user@host ...)
+  [--port 22] [--known-hosts file] [--enable] [--confirm] [--replace] [--comment text]
+```
+
+Secret Service requires `--collection`. Policy and provider references are explicit;
+records default to disabled. Success prints only the fingerprint and enabled state.
+Registration reads already trusted pins from one known-hosts file and never fetches
+keys or installs remote authorization. Encrypted OpenSSH keys require a no-echo
+controlling-terminal prompt; provider unlocking remains separate. Agent lifecycle
+flags do not apply. See [registration](../agent/registration.md) for replacement,
+validation, and destination-policy behavior.
+
 ## Agent lifecycle
 
 | Command | Purpose | Command-specific options |
