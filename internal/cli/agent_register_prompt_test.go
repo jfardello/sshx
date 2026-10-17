@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"reflect"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -370,6 +371,14 @@ func TestRegistrationPassphraseSubprocess(t *testing.T) {
 }
 
 func TestRegistrationPassphraseControllingTTY(t *testing.T) {
+	// The helper runs this test binary, so an instrumented build also prints
+	// testing's coverage summary. Accept only that framework output on stdout;
+	// prompt output still belongs exclusively to the controlling terminal.
+	outputPattern := `\APASS\n`
+	if testing.CoverMode() != "" {
+		outputPattern += `coverage: [0-9]+\.[0-9]+% of statements\n`
+	}
+	expectedOutput := regexp.MustCompile(outputPattern + `\z`)
 	for _, mode := range []string{"missing", "success", "interrupt", "quit", "suspend", "external-quit", "external-suspend", "pre-interrupt"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -378,8 +387,8 @@ func TestRegistrationPassphraseControllingTTY(t *testing.T) {
 			cmd.Env = append(os.Environ(), "SSHX_TEST_REGISTRATION_PROMPT="+mode)
 			// Stdin is deliberately unrelated to the controlling terminal.
 			cmd.Stdin = strings.NewReader("stdin-must-not-be-read\n")
-			var output bytes.Buffer
-			cmd.Stdout, cmd.Stderr = &output, &output
+			var output, diagnostic bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &output, &diagnostic
 			cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 			var master *os.File
 			var fd int
@@ -425,7 +434,7 @@ func TestRegistrationPassphraseControllingTTY(t *testing.T) {
 			if err := cmd.Wait(); err != nil {
 				t.Fatal("prompt subprocess failed", err)
 			}
-			if strings.TrimSpace(output.String()) != "PASS" {
+			if !expectedOutput.Match(output.Bytes()) || diagnostic.Len() != 0 {
 				t.Fatal("prompt wrote unexpected stdout/stderr")
 			}
 			if master != nil {
