@@ -12,6 +12,7 @@ and native agent work to internal packages.
 | `internal/credential/gopass` | Direct gopass adapter |
 | `internal/credential/secretservice` | D-Bus adapter and provider monitoring |
 | `internal/keystore` | Backend key-store construction |
+| `internal/helperexec` | Trusted local helper execution over private pipes |
 | `internal/pty` | Password-mode controlling PTY and stream forwarding |
 | `internal/agent` | Registry, socket protocol, policies, signing and lifecycle |
 | `internal/sensitive` | Owned sensitive-buffer cleanup |
@@ -53,6 +54,26 @@ identity so shutdown cannot unlink a replacement endpoint. Systemd owns activate
 sockets; sshx owns only its adopted descriptor and accepted connections.
 Command-scoped instances terminate with their child and clean up their private
 runtime directory.
+
+## Trusted helper execution
+
+The shared helper runner accepts an absolute executable path, borrowed request
+bytes, a caller context and explicit request/response byte limits. It supplies
+private pipes, a curated environment, sanitized errors, and process-group
+cleanup. It does not parse JSON or decide authorization. Callers own request
+interpretation, operation deadlines, admission/concurrency limits, and response
+validation. Successful response buffers belong to the caller and must be cleared;
+the runner clears failed response buffers without returning partial data.
+
+The agent keeps its four-job nonqueued gate and 30-second overall signing
+deadline. It uses 16 KiB request and response limits and continues to validate
+version-1 request IDs, operations and passphrases itself. Policy and generation
+checks remain in the agent before and after prompts and private-key operations.
+Other callers can choose different limits without changing the agent protocol.
+
+Executable trust is checked at configuration and again for each invocation.
+The helper guide describes the [pathname substitution limits](../agent/confirmation.md#enable-and-run)
+and [process-group cleanup limits](../agent/confirmation.md#bounds-and-invalidation).
 
 The [protocol reference](../reference/agent-protocol.md) contains bounds and
 wire details. [Testing](testing.md) describes fixtures and reproducible checks.

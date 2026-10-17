@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jfardello/sshx/internal/helperexec"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -238,10 +240,10 @@ json.dump(dict(version=1,request_id=r['request_id'],approved=True,passphrase='Zm
 	if err := os.Chmod(path, 0777); err != nil {
 		t.Fatal(err)
 	}
-	if trustedAgentHelper(path) {
+	if helperexec.Trusted(path) {
 		t.Fatal("writable helper trusted")
 	}
-	if trustedAgentHelper("helper") {
+	if helperexec.Trusted("helper") {
 		t.Fatal("PATH search permitted")
 	}
 }
@@ -256,6 +258,18 @@ func TestAgentPromptHelperTimeoutAndBounds(t *testing.T) {
 		if err == nil || time.Since(started) > 2*time.Second {
 			t.Fatal("helper did not fail promptly")
 		}
+	}
+}
+
+func TestAgentPromptRequestLimit(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "executed")
+	path := promptFixture(t, fmt.Sprintf("open(%q,'w').write('executed')\n", marker))
+	request := agentPromptRequest{Version: 1, Operation: "confirm", RequestID: strings.Repeat("a", maxAgentPromptBytes)}
+	if response, err := runAgentPrompt(context.Background(), path, request); !errors.Is(err, errAgentPromptDenied) || response != nil {
+		t.Fatal("oversized agent request did not fail closed", err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("oversized agent request launched the helper")
 	}
 }
 

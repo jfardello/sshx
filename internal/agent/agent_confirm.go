@@ -9,13 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"syscall"
-	"time"
 
+	"github.com/jfardello/sshx/internal/helperexec"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -58,7 +53,7 @@ type agentConnectionIdentity struct{}
 func (s *agentServer) SetPromptHelper(path string) error {
 	var prompt *agentPrompter
 	if path != "" {
-		if !trustedAgentHelper(path) {
+		if !helperexec.Trusted(path) {
 			return errAgentPromptUnavailable
 		}
 		prompt = &agentPrompter{ask: func(ctx context.Context, request agentPromptRequest) ([]byte, error) {
@@ -72,88 +67,23 @@ func (s *agentServer) SetPromptHelper(path string) error {
 	return nil
 }
 
-func trustedAgentHelper(path string) bool {
-	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
-		return false
-	}
-	current := "/"
-	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
-	for i, part := range parts {
-		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
-		if err != nil {
-			return false
-		}
-		st, ok := info.Sys().(*syscall.Stat_t)
-		if !ok || (st.Uid != 0 && st.Uid != uint32(os.Geteuid())) || info.Mode()&os.ModeSymlink != 0 {
-			return false
-		}
-		if info.Mode().Perm()&0022 != 0 && !(i < len(parts)-2 && st.Uid == 0 && info.Mode()&os.ModeSticky != 0) {
-			return false
-		}
-		if i == len(parts)-1 {
-			return info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0
-		}
-		if !info.IsDir() {
-			return false
-		}
-	}
-	return false
-}
-
-// Only display/session routing is inherited. Agent sockets, loader overrides,
-// backend configuration and arbitrary caller variables never reach the helper.
-func agentPromptEnvironment() []string {
-	env := []string{"PATH=/usr/bin:/bin", "LANG=C.UTF-8"}
-	for _, key := range []string{"HOME", "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
-		if value, ok := os.LookupEnv(key); ok {
-			env = append(env, key+"="+value)
-		}
-	}
-	return env
-}
-
-type agentPromptOutput struct{ data []byte }
-
-func (b *agentPromptOutput) Write(p []byte) (int, error) {
-	if len(p) > maxAgentPromptBytes-len(b.data) {
-		return 0, errAgentPromptDenied
-	}
-	b.data = append(b.data, p...)
-	return len(p), nil
-}
-
 func runAgentPrompt(ctx context.Context, path string, request agentPromptRequest) ([]byte, error) {
-	if !trustedAgentHelper(path) {
-		return nil, errAgentPromptUnavailable
-	}
 	input, err := json.Marshal(request)
 	if err != nil {
 		return nil, errAgentPromptDenied
 	}
 	defer clearBytes(input)
-	cmd := exec.CommandContext(ctx, path)
-	cmd.Env = agentPromptEnvironment()
-	cmd.Dir = "/"
-	cmd.Stdin = bytes.NewReader(input)
-	var output agentPromptOutput
-	defer func() { clearBytes(output.data) }()
-	cmd.Stdout = &output
-	cmd.Stderr = io.Discard
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-	cmd.WaitDelay = time.Second
-	if err := cmd.Start(); err != nil {
+	output, err := helperexec.Run(ctx, path, input, helperexec.Limits{
+		RequestBytes: maxAgentPromptBytes, ResponseBytes: maxAgentPromptBytes,
+	})
+	defer clearBytes(output)
+	if errors.Is(err, helperexec.ErrUnavailable) {
 		return nil, errAgentPromptUnavailable
 	}
-	defer func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }()
-	if err := cmd.Wait(); err != nil {
+	if err != nil {
 		return nil, errAgentPromptDenied
 	}
-	if ctx.Err() != nil {
-		return nil, errAgentPromptDenied
-	}
-	return decodeAgentPrompt(output.data, request)
+	return decodeAgentPrompt(output, request)
 }
 
 func decodeAgentPrompt(data []byte, request agentPromptRequest) ([]byte, error) {

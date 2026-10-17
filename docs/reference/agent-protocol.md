@@ -114,6 +114,10 @@ It sends one UTF-8 JSON object over a private stdin pipe and closes the pipe:
 }
 ```
 
+The version-1 request and response limits are each 16 KiB. A shared execution
+component enforces these caller-specific bounds without interpreting the JSON;
+the agent retains protocol validation and signing authorization.
+
 Unknown destinations contain only `{"status":"unknown"}`. The helper must make
 an explicit local decision and reply once on its private stdout pipe:
 

@@ -34,6 +34,10 @@ root, without symlinks or group/other write permission. Root-owned sticky ancest
 such as `/tmp` are permitted above an owned private directory. The helper is
 trusted local code; these checks cannot defend against malicious code running as
 the same user. The helper's interpreter and imports are also part of that trust.
+The path is checked both when configured and before each invocation. These are
+pathname checks, without a retained executable handle: a same-user or root
+replacement between validation and execution can still substitute the helper or
+its dependencies. They do not provide race-free executable pinning.
 
 For systemd, the existing environment and executable path should be retained.
 The helper option belongs in the service's ExecStart override:
@@ -82,10 +86,13 @@ is documented separately.
 
 There are at most four active signing jobs/prompts, no unbounded approval queue,
 and a 30-second total operation deadline including prompts and backend work.
-Responses are limited to 16 KiB and passphrases to 4096 bytes. Helper processes run
+Requests and responses are limited to 16 KiB and passphrases to 4096 bytes. Helper processes run
 in a separate process group and are terminated on cancellation or completion;
 stdout cannot grow without bound. Connections retain at most one pending frame;
 excessive pipelining is rejected. Disconnect or shutdown cancels waiting prompts.
+An oversized response also cancels its helper immediately. Process-group cleanup
+includes descendants that remain in that group; it cannot contain a descendant
+that deliberately detaches into a different group/session.
 
 Authorization is rechecked after confirmation, backend retrieval, passphrase
 entry and decryption, and before releasing the result after backend cleanup.
