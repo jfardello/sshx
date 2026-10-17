@@ -1,19 +1,19 @@
 # Configuration
 
-## Configuration boundaries
+## Configuration in sshx
 
 | Mechanism | Scope |
 | --- | --- |
-| `config.yaml` | Password SSH/SCP defaults and credential discovery |
+| `config.yaml` | Password-command defaults and optional `agent` defaults |
 | `agent.json` | Public keys, exact backend references, and per-key policies |
 | `sshx agent` flags | Agent lifecycle, helper, caching, mutations, forwarding |
 | `agent-state.json` | Machine-managed agent lock and suppression ledger |
 | OpenSSH configuration | SSH destinations, transport, and client behavior |
 
-Agent options are not YAML fields. See [registration](agent/registration.md),
+Agent defaults use a separate `agent` mapping. See [registration](agent/registration.md),
 [agent commands](reference/commands.md), and [persistent state](agent/ssh-add.md).
 
-## Password-command defaults
+## File location and precedence
 
 Command defaults belong in `~/.config/sshx/config.yaml`. If `XDG_CONFIG_HOME`
 is an absolute path, sshx reads `$XDG_CONFIG_HOME/sshx/config.yaml` instead.
@@ -21,7 +21,54 @@ An empty or relative `XDG_CONFIG_HOME` uses the home-directory fallback.
 
 Precedence is **built-in defaults < configuration file < explicit CLI options**.
 A missing or empty file preserves the built-in defaults. sshx reads the file
-once per invocation and does not create or modify it.
+once per applicable invocation. Connection and agent commands do not modify it;
+`sshx config` provides explicit edits. Changes affect future invocations, not
+running agents.
+
+## Inspecting and editing settings
+
+```sh
+sshx config path
+sshx config list
+sshx config get agent.cache-ttl --effective
+sshx config set agent.cache-ttl 1m
+sshx config set verbose false
+sshx config set agent.prompt-helper ""
+sshx config unset agent.prompt-helper
+```
+
+`sshx config` lists stored settings; `sshx config key` gets a setting and
+`sshx config key value` sets it. These shorthand forms match `list`, `get`, and
+`set`. Keys use dots for agent settings; underscores are accepted as aliases for
+hyphens, such as `agent.cache_ttl`.
+
+Get/list output quotes values so empty strings and control characters are visible.
+`--effective` includes built-in defaults and marks each value as `file` or
+`default`; it does not include invocation-specific overrides or resolve empty
+socket/state paths. Getting an absent stored setting fails unless `--effective`
+is used. Unset removes the override, unlike storing false, zero, or an empty string.
+`path` and help do not read the file.
+
+Edits preserve comments and unrelated supported settings, though YAML formatting
+may change. Values and the complete document must be valid; backend/scope
+combination checks remain specific to connection invocations. A semantic no-op
+does not rewrite the file.
+
+Writers require an absolute clean destination and reject symlinks in the file or
+ancestors, even when a reader accepts them. Ancestors must be user/root-owned and
+not group/other-writable; root-owned sticky directories are allowed only above
+the immediate parent. Existing config must be user-owned, regular, singly linked,
+and not group/other-writable. New directories use `0700`; replacements and stable
+sibling `.lock` files use `0600`. Existing permissions are not repaired.
+
+Concurrent edits use a short-lived lock; a busy lock fails immediately. Publication
+uses a synced temporary file and atomic replacement, with a final check for
+external changes. A post-replacement sync failure explicitly reports that the
+config was published but durability is uncertain; it must not be retried blindly.
+These guarantees require filesystem locking, atomic rename, and sync support and
+do not prevent every race with noncooperating same-user editors.
+
+## Password-command defaults
 
 ```yaml
 secret-collection: Login
@@ -87,12 +134,49 @@ backend selection, that prefix must also be cleared. Conflict errors identify
 whether the
 fields came from the CLI, file, or built-in defaults.
 
-The file must be one YAML mapping, at most 64 KiB. Only the keys above are
-accepted, with string values except for the `true`/`false` boolean `verbose`.
-Unknown/duplicate keys, nulls, aliases, nested values, multiple documents,
-invalid backends and unsafe gopass paths are rejected, even if a CLI option
-would replace the invalid field. File read errors stop the command before
-credential access. Help and shell completion work without loading the file.
+## Agent defaults
+
+```yaml
+agent:
+  cache-ttl: 1m
+  prompt-helper: /home/alice/.local/bin/sshx-helper
+  verbose: false
+```
+
+| Agent YAML key | CLI option | Default |
+| --- | --- | --- |
+| `verbose` | `--verbose` | `false` |
+| `cache-ttl` | `--cache-ttl` | `0s` (disabled); maximum `5m` |
+| `prompt-helper` | `--prompt-helper` | Empty (no helper) |
+| `allow-forwarding` | `--allow-forwarding` | `false` |
+| `allow-key-mutations` | `--allow-key-mutations` | `false` |
+| `socket` | `--socket` | Empty (platform/mode default) |
+| `state-file` | `--state-file` | Empty (default state ledger) |
+
+`agent start` and `agent run` use agent defaults, independently of the flat
+password-command settings. `start`, `env`, and endpoint `status` use the configured
+socket; `run` always creates a private temporary socket. `reset-state` uses the
+configured state file. `status --systemd` inspects units without using the socket
+setting; `stop` does not load config.
+
+Explicit `--verbose=false`, `--cache-ttl=0s`, or `--prompt-helper=""` clears the
+corresponding file default. Empty `--socket` and `--state-file` select the built-in
+paths. Nonempty paths must be absolute, clean, and contain no control characters;
+sshx does not expand `~` or environment variables. Runtime ownership, permissions,
+symlink, and helper-executable checks still apply when those paths are used.
+Foreground mode, socket activation, systemd selection, shell syntax, and child
+arguments remain invocation-only; they must not appear in YAML.
+
+## Validation and security
+
+The file must be one YAML mapping, at most 64 KiB. Only the documented keys and
+the `agent` mapping are accepted. Boolean values must be `true` or `false`;
+`cache-ttl` must be a duration string, and other scalar settings must be strings.
+Unknown/duplicate keys at either level, nulls, aliases, unsupported nesting,
+multiple documents, invalid backends, unsafe gopass paths, and invalid agent
+settings are rejected, even if a CLI option would replace the invalid field.
+File read or validation errors stop applicable commands before credential or
+agent filesystem operations. Help and shell completion do not load the file.
 
 Dotfiles symlinks to regular files are supported; dangling links and nonregular
 files are errors. For a manually managed file, directory mode `0700` and file

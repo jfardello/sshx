@@ -33,17 +33,28 @@ func newAgentCommand(deps dependencies) *cobra.Command {
 	var stateFile string
 	root.PersistentFlags().BoolVar(&allowMutations, "allow-key-mutations", false, "allow volatile ssh-add keys, removal and locking")
 	root.PersistentFlags().StringVar(&stateFile, "state-file", "", "absolute path to durable agent lock/suppression state")
+	var settings agentOptions
+	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		switch cmd.Name() {
+		case "start", "run", "env", "status", "reset-state":
+			var err error
+			settings, err = configuredAgentOptions(cmd, deps)
+			return err
+		default:
+			return nil
+		}
+	}
 	configuredContext := func(ctx context.Context) context.Context {
-		ctx = context.WithValue(ctx, agentForwardingContext{}, allowForwarding)
-		ctx = context.WithValue(ctx, agentCacheTTLContext{}, cacheTTL)
-		ctx = context.WithValue(ctx, agentPromptHelperContext{}, promptHelper)
-		return context.WithValue(ctx, agentMutationContext{}, agentMutationOptions{stateFile, allowMutations})
+		ctx = context.WithValue(ctx, agentForwardingContext{}, settings.allowForwarding)
+		ctx = context.WithValue(ctx, agentCacheTTLContext{}, settings.cacheTTL)
+		ctx = context.WithValue(ctx, agentPromptHelperContext{}, settings.promptHelper)
+		return context.WithValue(ctx, agentMutationContext{}, agentMutationOptions{settings.stateFile, settings.allowKeyMutations})
 	}
 	root.PersistentFlags().DurationVar(&cacheTTL, "cache-ttl", 0, "absolute signer cache lifetime (0 disables; maximum 5m)")
 	root.PersistentFlags().StringVar(&promptHelper, "prompt-helper", "", "absolute path to trusted local confirmation/passphrase helper")
 	root.PersistentFlags().BoolVar(&verbose, "verbose", false, "write secret-safe agent diagnostics to stderr")
 	diagnosticWriter := func(cmd *cobra.Command) io.Writer {
-		if verbose {
+		if settings.verbose {
 			return cmd.ErrOrStderr()
 		}
 		return nil
@@ -62,9 +73,9 @@ func newAgentCommand(deps dependencies) *cobra.Command {
 		var name string
 		var err error
 		if activation {
-			name, err = systemdAgentSocket(startSocket)
+			name, err = systemdAgentSocket(settings.socket)
 		} else {
-			name, err = agentSocketPath(startSocket, true)
+			name, err = agentSocketPath(settings.socket, true)
 		}
 		if err != nil {
 			return err
@@ -89,9 +100,9 @@ func newAgentCommand(deps dependencies) *cobra.Command {
 		var name string
 		var err error
 		if envSystemd {
-			name, err = systemdAgentSocket(envSocket)
+			name, err = systemdAgentSocket(settings.socket)
 		} else {
-			name, err = agentSocketPath(envSocket, false)
+			name, err = agentSocketPath(settings.socket, false)
 		}
 		if err != nil {
 			return err
@@ -110,7 +121,7 @@ func newAgentCommand(deps dependencies) *cobra.Command {
 		if statusSystemd {
 			return manager.status(cmd.Context(), cmd.OutOrStdout())
 		}
-		name, err := agentSocketPath(statusSocket, false)
+		name, err := agentSocketPath(settings.socket, false)
 		if err == nil {
 			err = agent.Probe(cmd.Context(), name)
 		}
@@ -136,7 +147,7 @@ func newAgentCommand(deps dependencies) *cobra.Command {
 		}}
 	stop.Flags().BoolVar(&stopSystemd, "systemd", false, "stop the user socket before stopping its service")
 	reset := &cobra.Command{Use: "reset-state", Short: "Reset lock and suppression state while the agent is stopped", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		path := stateFile
+		path := settings.stateFile
 		if path == "" {
 			var err error
 			path, err = agent.DefaultMutationStatePath()
@@ -150,7 +161,7 @@ func newAgentCommand(deps dependencies) *cobra.Command {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), "Agent lock and suppression state reset.")
 		return err
 	}}
-	root.AddCommand(start, env, status, run, stop, reset)
+	root.AddCommand(start, env, status, run, stop, reset, newAgentRegisterCommand(deps))
 	return root
 }
 

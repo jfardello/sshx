@@ -21,6 +21,7 @@ var (
 	errCredentialReference = credential.ErrReference
 	errCredentialTooLarge  = credential.ErrTooLarge
 	errCredentialRead      = credential.ErrRead
+	errCredentialLocked    = credential.ErrLocked
 	clearBytes             = sensitive.Clear
 	sanitizeKeyReadError   = credential.SanitizeKeyReadError
 	validAgentGopassPath   = credential.ValidGopassReference

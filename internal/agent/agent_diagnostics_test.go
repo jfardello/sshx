@@ -8,6 +8,51 @@ import (
 	"testing"
 )
 
+func TestAgentMutationDisabledDiagnostics(t *testing.T) {
+	const event = "sshx agent: mutation denied: key mutations are disabled; restart with --allow-key-mutations\n"
+	for _, tc := range []struct {
+		name         string
+		mutations    *agentMutationState
+		invalid      bool
+		wantDisabled bool
+	}{
+		{"not-configured", nil, false, true},
+		{"disabled", &agentMutationState{}, false, true},
+		{"enabled-but-failed", &agentMutationState{enabled: true, failed: true}, false, false},
+		{"enabled-but-invalid", &agentMutationState{enabled: true}, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, verbose := range []bool{false, true} {
+				keys := &agentKeyService{mutations: tc.mutations, invalid: tc.invalid}
+				server := &agentServer{keys: keys}
+				var out bytes.Buffer
+				if verbose {
+					server.SetDiagnostics(&out)
+					out.Reset()
+				}
+				connection := &agentConnection{ctx: context.Background(), keys: keys}
+				// Include sensitive-looking wire data: rejection must happen before
+				// parsing it, and diagnostics must contain only the fixed event.
+				for _, operation := range []byte{17, 25, 18, 19, 22, 23} {
+					out.Reset()
+					body := append([]byte{operation}, []byte("SECRET-KEY-OR-PASSPHRASE")...)
+					reply, err := connection.dispatchMutation(body)
+					if err != nil || !bytes.Equal(reply, agentPacket([]byte{agentFailureCode})) {
+						t.Fatalf("operation %d: reply %v, error %v", operation, reply, err)
+					}
+					want := ""
+					if verbose && tc.wantDisabled {
+						want = event
+					}
+					if out.String() != want {
+						t.Fatalf("operation %d, verbose %t: diagnostics %q, want %q", operation, verbose, out.String(), want)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestAgentDiagnosticsStagesAndRedaction(t *testing.T) {
 	host := bindingSigner(t)
 	record, raw := policyRecord(t, host.PublicKey())

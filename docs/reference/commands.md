@@ -23,6 +23,42 @@ string is replaced by a CLI occurrence; repeated CLI occurrences concatenate.
 A credential named after a subcommand can be selected through explicit `ssh`,
 for example `sshx ssh agent`.
 
+## Persistent configuration
+
+```text
+sshx config [key [value]]
+sshx config get key [--effective]
+sshx config list [--effective]
+sshx config set key value
+sshx config unset key
+sshx config path
+```
+
+With no arguments, `config` lists stored settings; a key reads it, and a key/value
+pair stores it. `--effective` adds defaults and provenance to reads. Dotted agent
+keys accept hyphens or underscores. Values are printed as quoted strings. See
+[configuration editing](../configuration.md#inspecting-and-editing-settings) for
+validation, comment preservation, and secure publication requirements.
+
+## Agent registration
+
+For the first connection, follow the [key quick start](../agent/README.md).
+[Provider setup](../providers.md) contains the private-key loading commands.
+
+```text
+sshx agent register id --backend gopass|secret-service --reference exact-reference
+  [--collection alias] (--unrestricted-local | --destination user@host ...)
+  [--port 22] [--known-hosts file] [--enable] [--confirm] [--replace] [--comment text]
+```
+
+Secret Service requires `--collection`. Policy and provider references are explicit;
+records default to disabled. Success prints only the fingerprint and enabled state.
+Registration reads already trusted pins from one known-hosts file and never fetches
+keys or installs remote authorization. Encrypted OpenSSH keys require a no-echo
+controlling-terminal prompt; provider unlocking remains separate. Agent lifecycle
+flags do not apply. See [registration](../agent/registration.md) for replacement,
+validation, and destination-policy behavior.
+
 ## Agent lifecycle
 
 | Command | Purpose | Command-specific options |
@@ -35,7 +71,8 @@ for example `sshx ssh agent`.
 | `agent reset-state` | Clear lock/suppression while stopped | Shared `--state-file` selection |
 
 The following flags configure an agent started by `start` or `run`. They do not
-reconfigure another running process and are not fields in `config.yaml`.
+reconfigure another running process. Their defaults may be stored in the separate
+`agent` mapping in `config.yaml`; explicit flags override those defaults.
 
 | Flag | Default | Effect |
 | --- | --- | --- |

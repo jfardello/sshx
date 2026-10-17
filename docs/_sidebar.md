@@ -1,10 +1,9 @@
 - [Overview](README.md)
 - Getting started
-  - [Installation and first connection](getting-started.md)
-  - [Configuration](configuration.md)
-  - [Credential providers](providers.md)
+  - [Installation and requirements](getting-started.md)
+  - [Load passwords and keys](providers.md)
 - Password authentication
-  - [SSH and SCP](password-authentication.md)
+  - [First connection, SSH and SCP](password-authentication.md)
 - Native agent
   - [First key-based connection](agent/README.md)
   - [Key registration](agent/registration.md)
@@ -15,6 +14,7 @@
   - [Forwarding](agent/forwarding.md)
   - [Signer cache](agent/caching.md)
 - Operations
+  - [Configuration and defaults](configuration.md)
   - [Troubleshooting](troubleshooting.md)
   - [Security](security.md)
 - Reference

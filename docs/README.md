@@ -5,84 +5,40 @@
 > SSH keys and passwords from encrypted storage
 
 sshx connects OpenSSH to credentials stored in gopass or desktop Secret Service
-providers such as KeePassXC, GNOME Keyring and KWallet. It supports password SSH/SCP
-and a native SSH agent for software keys. Credential stores remain read-only from
-sshx; provisioning uses the provider's management tools.
+providers, including GNOME Keyring, KeePassXC and KWallet. Existing SSH, SCP and
+Git clients can use the native agent for keys; the password wrapper handles
+password-based SSH and SCP. Credential storage stays with the chosen provider.
 
 ## Getting started
 
-[Installation and first connection](getting-started.md) covers requirements and
-setup. Linux AMD64 and macOS ARM64 binaries are available from
-[GitHub Releases](https://github.com/jfardello/sshx/releases/latest).
+Start with [installation and requirements](getting-started.md), then choose an
+authentication method:
 
-An existing credential can be selected with `sshx ssh alice@server.example`.
-For a new password entry, the following examples prompt interactively for the
-secret. Secret Service requires an available provider on the session bus;
-`auto` uses it on Linux and falls back to direct gopass only when unavailable.
+| Method | First connection |
+| --- | --- |
+| Stored password | [Store a password and connect](password-authentication.md#first-password-connection) |
+| SSH private key | [Store a key, register it, and connect](agent/README.md) |
 
-<!-- tabs:start -->
+The [provider guide](providers.md) contains loading instructions for gopass,
+Secret Service and the KWallet schema variant. No registry JSON needs to be
+written for a first key connection; `sshx agent register` creates the public record.
 
-#### **GNOME Keyring**
+## After the first connection
 
-```sh
-secret-tool store --label='alice@server.example' \
-  service sshx sshx.target alice@server.example
-sshx ssh alice@server.example
-```
-
-#### **KWallet**
-
-The QtKeychain attributes make the password entry visible in the KWallet app:
-
-```sh
-secret-tool store --label='sshx/alice@server.example' \
-  service sshx sshx.target alice@server.example \
-  xdg:schema org.qt.keychain server sshx type plaintext user alice@server.example
-sshx ssh alice@server.example
-```
-
-#### **gopass**
-
-An initialized gopass store can hold the password at an explicit path:
-
-```sh
-gopass insert servers/alice@server.example
-sshx ssh servers/alice@server.example --credential-backend gopass
-```
-
-Direct gopass and a gopass Secret Service bridge have different lookup contracts.
-[Provider setup](providers.md) explains the distinction.
-
-<!-- tabs:end -->
-
-The password wrapper supplies the password through a controlling pseudo-terminal.
-For keys, a [registered agent identity](agent/README.md) can be used with:
-
-```sh
-sshx agent run -- ssh alice@server.example
-```
-
-The agent retrieves private material for local signing. OpenSSH discovers its
-registered public identities; private keys are not sent to SSH servers.
-
-## Common tasks
-
-- [Connect or transfer files with a stored password](password-authentication.md)
-- [Configure gopass, KWallet, KeePassXC, or GNOME Keyring](providers.md)
-- [Configure command defaults](configuration.md)
-- [Make a first key-based connection](agent/README.md)
+- [Transfer files and run remote commands](password-authentication.md#ssh-connections)
+- [Save command defaults](configuration.md)
 - [Run a shared or systemd agent](agent/running.md)
-- [Import keys with ssh-add](agent/ssh-add.md)
-- [Require local signing approval](agent/confirmation.md)
-- [Restrict destinations](agent/destination-policies.md)
+- [Require signing approval or enter a key passphrase](agent/confirmation.md)
+- [Understand destination restrictions](agent/destination-policies.md)
+- [Import temporary keys with ssh-add](agent/ssh-add.md)
 - [Enable constrained forwarding](agent/forwarding.md)
-- [Diagnose connection failures](troubleshooting.md)
+- [Diagnose connection and registration failures](troubleshooting.md)
 
 ## Reference and development
 
-[Commands](reference/commands.md), [security boundaries](security.md), and
-[agent protocol](reference/agent-protocol.md) describe behavior and limits.
-[Architecture](development/architecture.md), [testing](development/testing.md),
-and [provider smoke tests](development/secret-service-smoke-tests.md) cover
-implementation and validation. Source is available on
+[Commands](reference/commands.md), [registration details](agent/registration.md),
+[security boundaries](security.md), and the [agent protocol](reference/agent-protocol.md)
+provide the full contracts. [Architecture](development/architecture.md),
+[testing](development/testing.md), and [provider smoke tests](development/secret-service-smoke-tests.md)
+cover implementation and validation. Source is available on
 [GitHub](https://github.com/jfardello/sshx).

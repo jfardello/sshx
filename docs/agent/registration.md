@@ -4,12 +4,65 @@ Registration associates a public key with an exact existing credential-store ent
 It does not generate keys, install remote authorized_keys, or import private material.
 The native agent reads this registry; password-based SSH/SCP commands do not.
 
+## Register an existing provider key
+
+The [key quick start](README.md#register-an-existing-key) contains the normal
+registration commands for gopass, Secret Service and KWallet. The
+[provider guide](../providers.md) owns the private-key loading instructions and
+item schemas. This page describes registration options and the public registry.
+
+The key must already exist in the provider. Backend and reference are explicit;
+Secret Service also requires a collection alias. Neither password-command config
+nor agent lifecycle defaults select registration's backend or policy.
+
+Choose `--unrestricted-local` or one or more `--destination user@host` values,
+never both. Records are disabled unless `--enable` is supplied. `--confirm` requires
+per-request approval when the running agent signs; `--comment` sets public display
+metadata. `--replace` permits changes to the requested ID only and is not a merge:
+all requested metadata/policy values define the replacement, including disabled
+and no-confirmation defaults. Successful output contains only the key fingerprint
+and enabled state.
+
+Destination registration reads only `--known-hosts` (default `~/.ssh/known_hosts`),
+limited to 1 MiB. Existing pins must already be trusted; registration does not fetch
+host keys, resolve aliases through DNS, or read system known-hosts files. Hashed
+entries and multiple supported plain keys are accepted. Missing pins, matching
+revocations or unsupported/certificate keys, malformed input, and CA-only trust
+fail closed. Up to 64 direct edges and 16 pins per destination are supported.
+
+```sh
+sshx agent register work-key --backend gopass --reference ssh-keys/work-key \
+  --destination 'alice@[2001:db8::1]' --port 2222 \
+  --known-hosts /home/alice/.ssh/known_hosts --enable
+```
+
+Every destination needs an exact nonempty username. Embedded ports, wildcards,
+URIs, whitespace, and IPv6 zone identifiers are rejected. One `--port` applies to
+all destinations. The example looks up `[2001:db8::1]:2222` but stores an unbracketed
+host label. Host labels and ports are lookup metadata: signing authorization binds
+host keys and username, **not a TCP port**.
+
+Provider reads are noninteractive; follow the provider's
+[unlocking instructions](../providers.md) before registration. GPG pinentry
+failures produce a locked-provider error; the recovery command is in the
+[gopass key guide](../providers.md#gopass-private-keys).
+
+An encrypted OpenSSH private key then requires its own passphrase through a
+no-echo controlling-terminal prompt, not stdin, CLI arguments, or the agent helper.
+Without a controlling terminal, registration fails with an actionable error.
+The prompt accepts up to 4096 bytes; erase/backspace and kill-line edit hidden
+input. Interrupt, quit, and suspend controls cancel registration rather than
+leaving a suspended process with echo disabled. Terminal settings are restored.
+Provider resources and owned secret buffers are released before registry locking.
+A full private/public pair is validated before any public record is published.
+
 ## Registry
 
 The registry loader reads `$XDG_CONFIG_HOME/sshx/agent.json` when
 `XDG_CONFIG_HOME` is absolute, otherwise `~/.config/sshx/agent.json`.
 A missing file means no registered keys. Existing password commands do not read
-this file. No files or credentials are automatically created or modified.
+this file. Only an explicit registration operation writes the registry; provider
+credentials are never created or modified by registration.
 
 The file must be a regular file owned by the current user, with no group/other
 permissions (`0600` is recommended). Its ancestor directories must be owned by
@@ -45,9 +98,7 @@ from the corresponding `.pub` file, without its trailing comment:
 }
 ```
 
-Registration means associating a public key with one exact existing private-key
-entry. It does not generate keys or install `authorized_keys`. `enabled` defaults
-to false. Version 1 supports `unrestricted-local`; version 2 also supports
+Version 1 supports `unrestricted-local`; version 2 also supports
 `destination-constrained` with explicit pins and username rules. See
 [destination policy](destination-policies.md) for the schema and live
 update behavior. Unknown policy/schema fields are rejected. Private keys, passwords and passphrases must not be stored in the registry.
@@ -76,33 +127,48 @@ enabled state, confirmation requirement, and policy are identical. Such aliases 
 record's identity and comment. Conflicting duplicates reject the whole registry.
 Unknown, duplicate, case-altered, or null JSON fields also reject the registry.
 
+## Writer and live-reload behavior
+
+The internal registry writer accepts public records only. Registration finishes
+provider access, private/public-key validation, and passphrase prompts before
+entering the update transaction.
+`agent.ValidateKeyMaterial` shares the signing parser's format, algorithm, size,
+and encrypted OpenSSH KDF limits without prompting or modifying borrowed buffers.
+An envelope public key alone is not sufficient validation.
+
+An identical decoded record is a no-op, including with replacement requested.
+Default/empty optional fields and JSON whitespace do not force a rewrite; destination
+edge and pin order remain significant. Changing an existing ID requires explicit
+replacement. Only that ID is replaced, in its existing position; new IDs append.
+Unrelated records and supported aliases survive, and conflicting aliases reject
+the complete transaction. Initially invalid registries are never repaired implicitly.
+Actual updates emit version 2; an identical version-1 record remains a no-op.
+
+Writers publish complete validated JSON through the shared secure-update operation.
+They reject symlinks, multiply linked targets, and nonprivate registry files; use a
+stable sibling lock that fails immediately when busy; and detect external changes
+before replacement. New directories use `0700` and replacement files use `0600`.
+A post-replacement sync failure reports publication with uncertain durability,
+not rollback. JSON formatting need not survive.
+
+Effective registry changes invalidate cached signers and pending authorization
+generations and retire volatile imports. Persisted lock/suppression state remains
+intact. No-op, formatting-only, and runtime-equivalent alias changes must not
+manufacture an effective change. Registration does not install remote keys,
+modify provider secrets, or reset agent state.
+
 ## Backend contracts
 
 Identity discovery reads public registry data only: no provider calls, secret
 reads, unlock requests, or prompts. Internal backend metadata searches use a noninteractive default and exact
-attribute matching for Secret Service; there is no agent registration/discovery
-CLI. Password commands explicitly retain their interactive behavior.
+attribute matching for Secret Service. Registration uses an exact reference rather
+than discovery. Password commands explicitly retain their interactive behavior.
 
-A Secret Service key item must carry these nonsecret string attributes:
-
-```text
-service=sshx
-sshx.type=ssh-key
-sshx.schema=1
-sshx.id=<stable-item-id>
-```
-
-For example, its registry reference is:
-
-```json
-{
-  "backend": "secret-service",
-  "reference": "work-key-001",
-  "collection": "default"
-}
-```
-
-These fields replace the backend/reference fields in the complete record above.
+Secret Service provisioning requires the
+[key-item attributes](../providers.md#secret-service-private-keys). Its registry
+uses `backend: secret-service`, the item's stable `sshx.id` as `reference`, and a
+collection alias as `collection`. KWallet adds only
+[display-schema attributes](../providers.md#kwallet-private-keys).
 The adapter resolves the collection alias and stable ID on every read. It pins
 calls and session cleanup to the provider's unique bus owner, rejects ambiguous
 IDs, rechecks attributes and locks, and rejects results after owner replacement.
@@ -123,8 +189,9 @@ hooks, reference following, and synchronization. GPG receives
 pinentry. Age helper/keychain integration is disabled and passphrase input is
 restricted to closed stdin. Unsupported command options fail without retrying
 with password-only output. Store-location configuration is preserved. The
-verified direct-gopass baseline is **1.17.0 with GPG**; other crypto backends need
-their own disposable-provider validation.
+tested versions and setup prerequisites are listed in the
+[provider guide](../providers.md#direct-gopass); other crypto backends need their
+own disposable-provider validation.
 
 ## Validation and lifetime
 
@@ -150,7 +217,5 @@ optional [signer cache](caching.md) retains parsed keys only under a
 revocable provider lease; external GPG/provider caches have separate lifetimes.
 Key-read errors expose only known error kinds, never helper output or provider
 error text. No backend fallback occurs after key selection.
-
-
 Private material must already exist in the selected provider. A complete first
 connection is described in the [agent quick start](README.md).

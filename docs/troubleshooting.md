@@ -32,7 +32,8 @@ key explicitly and limits authentication to public keys. This helps when
 authentication attempts. The `-i` file contains only the public key; the agent
 provides the private-key signature. `-vvv` enables OpenSSH diagnostics.
 
-Agent `--verbose` belongs before `--` and is independent of YAML verbosity.
+Agent `--verbose` belongs before `--` and overrides `agent.verbose` in the
+configuration file, independently of password-command verbosity.
 It reports fixed categories for registry, binding, policy, backend, validation,
 cache and signing stages. Private keys, passphrases, provider stderr and raw
 backend errors are excluded. Child OpenSSH diagnostics are separate.
@@ -47,6 +48,28 @@ backend errors are excluded. Child OpenSSH diagnostics are separate.
 | Correct unlock password refused | Persistent failed-unlock cooldown has not elapsed |
 | Removed key remains absent after restart | Suppression persists; stopped-agent `reset-state` explicitly clears it |
 | Forwarded signing refused | Agent opt-in, constrained identity, all edges, and hostbound final authentication |
+
+## Registration and provider unlocking
+
+Registration should print a fingerprint and enabled state. A failure before
+publication leaves the registry unchanged, except when the error explicitly
+reports publication with uncertain durability.
+
+| Symptom | Next step |
+| --- | --- |
+| Gopass works interactively, but registration reports a locked provider | Unlock GPG with the [normal gopass read](providers.md#gopass-private-keys), then retry in the same environment |
+| Older gopass reports an unsupported flag | Check `command -v gopass` and `gopass show --help`; key reads require `--nofuzzysearch`, as described in [provider setup](providers.md#direct-gopass) |
+| Generic credential operation failure | Check the exact reference, active store configuration, GPG decryption readiness, or Secret Service availability; raw provider stderr is intentionally excluded |
+| Secret Service reference rejected | Use the [key-item schema](providers.md#secret-service-private-keys), a unique stable ID, and the correct collection alias, not a display label or object path |
+| Stored item is absent from the KWallet application | Check the [QtKeychain variant](providers.md#kwallet-private-keys) and the active desktop provider |
+| Missing trusted host pin | Verify the server fingerprint independently and populate the selected known-hosts file; registration never fetches pins |
+| Existing registration differs | Supply `--replace` and the complete intended backend, policy and enablement; see [replacement semantics](agent/registration.md#register-an-existing-provider-key) |
+
+Provider unlocking, registration-time key passphrase entry and signing-time
+passphrase prompts are separate operations. The
+[key quick start](agent/README.md#store-the-private-key) explains their sequence.
+Changing `XDG_CONFIG_HOME` can change both sshx and gopass configuration; loading,
+unlocking and registration must select the same store.
 
 ## Systemd differs from a terminal
 

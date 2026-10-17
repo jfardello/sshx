@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/jfardello/sshx/internal/credential"
 	"github.com/spf13/cobra"
 )
 
@@ -25,15 +26,17 @@ type commandOptions struct {
 }
 
 type dependencies struct {
-	ctx                context.Context
-	gopassStore        credentialStore
-	secretServiceStore credentialStoreProvider
-	goos               string
-	loadConfig         func() (optionOverrides, error)
-	runProgram         func(program string, args []string, password []byte) error
-	stdout             io.Writer
-	stderr             io.Writer
-	systemctl          func(context.Context, ...string) ([]byte, error)
+	ctx                    context.Context
+	gopassStore            credentialStore
+	secretServiceStore     credentialStoreProvider
+	goos                   string
+	loadConfig             func() (optionOverrides, error)
+	runProgram             func(program string, args []string, password []byte) error
+	stdout                 io.Writer
+	stderr                 io.Writer
+	systemctl              func(context.Context, ...string) ([]byte, error)
+	openKeyStore           func(context.Context, credential.Backend) (credential.KeyStore, error)
+	registrationPassphrase func(context.Context) ([]byte, error)
 }
 
 func newRootCommand() *cobra.Command {
@@ -43,7 +46,7 @@ func newRootCommand() *cobra.Command {
 		goos:               runtime.GOOS,
 		loadConfig:         loadUserConfig,
 		runProgram: func(program string, args []string, password []byte) error {
-			return runPTY(program, args, password, os.Stdin, os.Stdout)
+			return runPTY(program, args, password, os.Stdin, os.Stdout, os.Stderr)
 		},
 		stdout: os.Stdout,
 		stderr: os.Stderr,
@@ -58,9 +61,10 @@ func newRootCommandWithDependencies(deps dependencies) *cobra.Command {
 		Short: "Run SSH or SCP with a stored password",
 		Long: `sshx retrieves a credential from Secret Service or gopass and runs OpenSSH in a new PTY.
 
-The child process uses the PTY slave as stdin, stdout, stderr, and its
-controlling terminal. sshx detects the password prompt, writes the password to
-the PTY master, and then maintains a normal interactive session.
+Fully interactive sessions use the PTY for stdin, stdout, and stderr.
+Redirected sessions preserve separate stdout and stderr, and file or pipe stdin
+passes directly to OpenSSH. The PTY handles password prompts and terminal input
+separately, sending terminal messages to stderr.
 
 Defaults are read from ~/.config/sshx/config.yaml (or $XDG_CONFIG_HOME/sshx/config.yaml).
 Explicit command-line options override file defaults.`,
@@ -85,7 +89,7 @@ Explicit command-line options override file defaults.`,
 	// Parsing is manual so options not owned by sshx pass through to
 	// OpenSSH unchanged.
 	addPassthroughFlag(cmd, "SSH")
-	cmd.AddCommand(newSSHCommand(deps), newSCPCommand(deps), newCredentialsCommand(deps), newAgentCommand(deps))
+	cmd.AddCommand(newSSHCommand(deps), newSCPCommand(deps), newCredentialsCommand(deps), newAgentCommand(deps), newConfigCommand(deps))
 	return cmd
 }
 

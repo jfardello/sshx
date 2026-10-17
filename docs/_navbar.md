@@ -1,4 +1,5 @@
 - [Getting started](getting-started.md)
-- [Agent](agent/README.md)
+- [Passwords](password-authentication.md)
+- [SSH keys](agent/README.md)
 - [Security](security.md)
 - [Source](https://github.com/jfardello/sshx)

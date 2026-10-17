@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -82,17 +83,48 @@ func TestGopassKeyEnvironment(t *testing.T) {
 			}
 		}
 	}
-	env := gopassKeyEnvironment([]string{"PATH=/bin", "GOPASS_CONFIG=/owned/config", "GOPASS_HOMEDIR=/owned/home", "GOPASS_DEBUG=1", "GOPASS_DEBUG_LOG_SECRETS=true", "GOPASS_MEM_PROFILE=/tmp/leak", "GOPASS_GPG_OPTS=--pinentry-mode ask", "PASSWORD_STORE_GPG_OPTS=--pinentry-mode ask", "GPG_TTY=/dev/tty", "GOPASS_AGE_PASSWORD=private"})
+	env := gopassKeyEnvironment([]string{"PATH=/bin", "LC_ALL=es_ES.UTF-8", "GOPASS_CONFIG=/owned/config", "GOPASS_HOMEDIR=/owned/home", "GOPASS_DEBUG=1", "GOPASS_DEBUG_LOG_SECRETS=true", "GOPASS_MEM_PROFILE=/tmp/leak", "GOPASS_GPG_OPTS=--pinentry-mode ask", "PASSWORD_STORE_GPG_OPTS=--pinentry-mode ask", "GPG_TTY=/dev/tty", "GOPASS_AGE_PASSWORD=private"})
 	joined := strings.Join(env, "\n")
-	for _, bad := range []string{"private", "--pinentry-mode ask", "GOPASS_DEBUG", "GOPASS_MEM_PROFILE", "GPG_TTY="} {
+	for _, bad := range []string{"private", "--pinentry-mode ask", "GOPASS_DEBUG", "GOPASS_MEM_PROFILE", "GPG_TTY=", "LC_ALL=es_ES.UTF-8"} {
 		if strings.Contains(joined, bad) {
 			t.Fatal("unsafe environment", bad)
 		}
 	}
-	for _, want := range []string{"GOPASS_CONFIG=/owned/config", "GOPASS_HOMEDIR=/owned/home", "--batch --no-tty --pinentry-mode error", "GOPASS_HOOK=1", "core.follow-references", "age.agent-enabled"} {
+	for _, want := range []string{"LC_ALL=C", "GOPASS_CONFIG=/owned/config", "GOPASS_HOMEDIR=/owned/home", "--batch --no-tty --pinentry-mode error", "GOPASS_HOOK=1", "core.follow-references", "age.agent-enabled"} {
 		if !strings.Contains(joined, want) {
 			t.Fatal("missing control", want)
 		}
+	}
+}
+
+func TestGopassNoninteractiveUnlockErrors(t *testing.T) {
+	decryptErr := exec.Command("sh", "-c", "exit 11").Run()
+	otherErr := exec.Command("sh", "-c", "exit 2").Run()
+	for _, tc := range []struct {
+		name, diagnostic string
+		failure, want    error
+	}{
+		{"locked", "gpg: decryption failed: No pinentry\nPRIVATE-MARKER", decryptErr, errCredentialLocked},
+		{"locked-public-key", "gpg: public key decryption failed: No pinentry\nPRIVATE-MARKER", decryptErr, errCredentialLocked},
+		{"missing-key", "gpg: decryption failed: No secret key\nPRIVATE-MARKER", decryptErr, errCredentialRead},
+		{"other-exit", "gpg: decryption failed: No pinentry\nPRIVATE-MARKER", otherErr, errCredentialRead},
+		{"unrecognized-error", "PRIVATE-MARKER", decryptErr, errCredentialRead},
+		{"timeout", "gpg: decryption failed: No pinentry\nPRIVATE-MARKER", context.DeadlineExceeded, context.DeadlineExceeded},
+		{"oversize", "gpg: decryption failed: No pinentry\nPRIVATE-MARKER", errCredentialTooLarge, errCredentialTooLarge},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var diagnostic bytes.Buffer
+			store := newGopassStore(&diagnostic)
+			data, stderr := []byte("PRIVATE-MARKER"), []byte(tc.diagnostic)
+			store.executeCommand = func(...string) ([]byte, []byte, error) { return data, stderr, tc.failure }
+			result, err := store.KeyMaterial(context.Background(), credentialRef{Backend: credentialBackendGopass, ID: "keys/test"})
+			if !errors.Is(err, tc.want) || len(result) != 0 || diagnostic.Len() != 0 || strings.Contains(err.Error(), "PRIVATE-MARKER") {
+				t.Fatalf("result=%d bytes, error=%v, diagnostics=%q", len(result), err, diagnostic.String())
+			}
+			if !bytes.Equal(data, make([]byte, len(data))) || !bytes.Equal(stderr, make([]byte, len(stderr))) {
+				t.Fatal("private output buffers were not cleared")
+			}
+		})
 	}
 }
 func TestGopassSubprocessLimitsAndCancellation(t *testing.T) {
