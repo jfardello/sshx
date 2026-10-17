@@ -15,6 +15,9 @@ go build -o /tmp/sshx ./cmd/sshx
 `GOCACHE=/tmp/sshx-go-cache` can select a writable cache in a restricted environment.
 Normal tests cover configuration, terminal handling, provider errors, registry
 trust, policy, bindings, locking, constraints, confirmation and revocation.
+When an OpenSSH client is installed, normal PTY tests also verify password
+authentication and binary archive upload/download against a disposable local
+SSH endpoint, including decompression and checksum validation.
 
 ## OpenSSH interoperability
 
@@ -91,6 +94,12 @@ desktop-helper or systemd environments. Historical local run counts are not a
 substitute for current validation.
 
 ## Documentation
+
+Installation belongs in getting started; provider loading commands, schemas and
+unlocking belong in the provider guide. Password and key quick starts own the
+first-connection workflows. Registration, configuration and agent operation
+pages own their detailed contracts. Keep landing pages short and link to those
+sources instead of copying complete setup instructions or attribute definitions.
 
 ```sh
 python3 scripts/check-docs.py

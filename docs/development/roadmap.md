@@ -1,33 +1,14 @@
 # Roadmap
 
-These features are planned, not implemented. Scope and interfaces may change;
-no release dates are committed. Existing behavior is described in the usage guides.
+Registration and configuration are available through the usage guides below.
+The remaining features are planned; scope and interfaces may change, and no
+release dates are committed.
 
 ## Key registration and configuration management
 
-- Add `sshx agent register` to validate an existing stored key and write its public
-  identity, exact backend reference, confirmation requirement, and policy.
-- Support explicit replacement and optional enablement; default to disabled.
-  Destination policies use trusted known_hosts pins, including hashed entries and
-  nonstandard ports. Registration does not install remote authorized_keys.
-- Add `sshx config` get/set/unset/list/path operations, shorthand key names,
-  effective defaults, and comment-preserving YAML edits.
-- Persist agent defaults alongside password settings, with explicit CLI overrides.
-  Secure atomic updates preserve unrelated settings and agent lock/suppression state.
-
-## Native age backend
-
-- Add an explicitly selected Go age store for passwords and SSH keys, using X25519
-  identities kept outside the store, with optional identity passphrase protection.
-- Encrypt each entry separately and encrypt metadata catalogs by access group.
-  Path rules select recipients; global administrators can access every group.
-- Add store initialization, identity generation, add/replace/remove/list/check,
-  policy application, and explicit acceptance of changed policy digests.
-- Integrate password discovery, registration, and agent signing with stable store
-  and entry IDs. Keep identity unlocking separate from SSH-key passphrase prompts;
-  initially retain neither unlocked identities nor cached signers.
-- Use atomic manifest snapshots and Git-friendly ciphertext. Recipient removal
-  re-encrypts current data; historical access still requires credential rotation.
+See [key registration](../agent/registration.md) and
+[configuration management](../configuration.md) for the implemented commands and
+their current contracts.
 
 ## Desktop helper and password selection
 
@@ -55,5 +36,5 @@ no release dates are committed. Existing behavior is described in the usage guid
   ship Windows ZIP artifacts and validate real console, agent, and GUI behavior.
 - Defer Credential Manager, ARM64, WSL interoperability, and Windows service hosting.
 
-Registration/configuration precedes age integration. Each feature requires
+Age integration builds on existing registration/configuration. Each new feature requires
 isolated acceptance tests and existing-platform regression checks before release.

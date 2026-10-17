@@ -6,13 +6,10 @@ The native agent reads this registry; password-based SSH/SCP commands do not.
 
 ## Register an existing provider key
 
-```sh
-sshx agent register work-key --backend gopass --reference ssh-keys/work-key \
-  --destination alice@server.example --enable
-
-sshx agent register wallet-key --backend secret-service \
-  --reference work-key-001 --collection default --unrestricted-local
-```
+The [key quick start](README.md#register-an-existing-key) contains the normal
+registration commands for gopass, Secret Service and KWallet. The
+[provider guide](../providers.md) owns the private-key loading instructions and
+item schemas. This page describes registration options and the public registry.
 
 The key must already exist in the provider. Backend and reference are explicit;
 Secret Service also requires a collection alias. Neither password-command config
@@ -45,7 +42,11 @@ all destinations. The example looks up `[2001:db8::1]:2222` but stores an unbrac
 host label. Host labels and ports are lookup metadata: signing authorization binds
 host keys and username, **not a TCP port**.
 
-Provider reads are noninteractive; unlock the wallet or GPG keyring separately.
+Provider reads are noninteractive; follow the provider's
+[unlocking instructions](../providers.md) before registration. GPG pinentry
+failures produce a locked-provider error; the recovery command is in the
+[gopass key guide](../providers.md#gopass-private-keys).
+
 An encrypted OpenSSH private key then requires its own passphrase through a
 no-echo controlling-terminal prompt, not stdin, CLI arguments, or the agent helper.
 Without a controlling terminal, registration fails with an actionable error.
@@ -97,9 +98,7 @@ from the corresponding `.pub` file, without its trailing comment:
 }
 ```
 
-Registration means associating a public key with one exact existing private-key
-entry. It does not generate keys or install `authorized_keys`. `enabled` defaults
-to false. Version 1 supports `unrestricted-local`; version 2 also supports
+Version 1 supports `unrestricted-local`; version 2 also supports
 `destination-constrained` with explicit pins and username rules. See
 [destination policy](destination-policies.md) for the schema and live
 update behavior. Unknown policy/schema fields are rejected. Private keys, passwords and passphrases must not be stored in the registry.
@@ -165,26 +164,11 @@ reads, unlock requests, or prompts. Internal backend metadata searches use a non
 attribute matching for Secret Service. Registration uses an exact reference rather
 than discovery. Password commands explicitly retain their interactive behavior.
 
-A Secret Service key item must carry these nonsecret string attributes:
-
-```text
-service=sshx
-sshx.type=ssh-key
-sshx.schema=1
-sshx.id=<stable-item-id>
-```
-
-For example, its registry reference is:
-
-```json
-{
-  "backend": "secret-service",
-  "reference": "work-key-001",
-  "collection": "default"
-}
-```
-
-These fields replace the backend/reference fields in the complete record above.
+Secret Service provisioning requires the
+[key-item attributes](../providers.md#secret-service-private-keys). Its registry
+uses `backend: secret-service`, the item's stable `sshx.id` as `reference`, and a
+collection alias as `collection`. KWallet adds only
+[display-schema attributes](../providers.md#kwallet-private-keys).
 The adapter resolves the collection alias and stable ID on every read. It pins
 calls and session cleanup to the provider's unique bus owner, rejects ambiguous
 IDs, rechecks attributes and locks, and rejects results after owner replacement.
@@ -205,8 +189,9 @@ hooks, reference following, and synchronization. GPG receives
 pinentry. Age helper/keychain integration is disabled and passphrase input is
 restricted to closed stdin. Unsupported command options fail without retrying
 with password-only output. Store-location configuration is preserved. The
-verified direct-gopass baseline is **1.17.0 with GPG**; other crypto backends need
-their own disposable-provider validation.
+tested versions and setup prerequisites are listed in the
+[provider guide](../providers.md#direct-gopass); other crypto backends need their
+own disposable-provider validation.
 
 ## Validation and lifetime
 
@@ -232,7 +217,5 @@ optional [signer cache](caching.md) retains parsed keys only under a
 revocable provider lease; external GPG/provider caches have separate lifetimes.
 Key-read errors expose only known error kinds, never helper output or provider
 error text. No backend fallback occurs after key selection.
-
-
 Private material must already exist in the selected provider. A complete first
 connection is described in the [agent quick start](README.md).

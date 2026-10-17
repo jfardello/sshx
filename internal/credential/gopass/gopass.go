@@ -14,7 +14,10 @@ import (
 	"time"
 )
 
-const gopassNotFoundExitCode = 10
+const (
+	gopassNotFoundExitCode = 10
+	gopassDecryptExitCode  = 11
+)
 
 type gopassStore struct {
 	stderr         io.Writer
@@ -260,12 +263,13 @@ func gopassKeyEnvironment(inherited []string) []string {
 		if strings.HasPrefix(name, "GOPASS_") && name != "GOPASS_CONFIG" && name != "GOPASS_HOMEDIR" {
 			continue
 		}
-		if name == "PASSWORD_STORE_GPG_OPTS" || name == "GPG_TTY" || name == "SSH_AUTH_SOCK" || name == "SSH_AGENT_PID" || name == "LISTEN_FDS" || name == "LISTEN_PID" || name == "LISTEN_FDNAMES" || name == "LISTEN_PIDFDID" {
+		if name == "LC_ALL" || name == "PASSWORD_STORE_GPG_OPTS" || name == "GPG_TTY" || name == "SSH_AUTH_SOCK" || name == "SSH_AGENT_PID" || name == "LISTEN_FDS" || name == "LISTEN_PID" || name == "LISTEN_FDNAMES" || name == "LISTEN_PIDFDID" {
 			continue
 		}
 		env = append(env, value)
 	}
-	env = append(env, "GOPASS_GPG_OPTS=--batch --no-tty --pinentry-mode error", "GOPASS_HOOK=1", "GOPASS_AGE_STDIN_PASSPHRASE=1", "GOPASS_CONFIG_NO_MIGRATE=1")
+	// Keep GPG diagnostics deterministic for the bounded error classification.
+	env = append(env, "LC_ALL=C", "GOPASS_GPG_OPTS=--batch --no-tty --pinentry-mode error", "GOPASS_HOOK=1", "GOPASS_AGE_STDIN_PASSPHRASE=1", "GOPASS_CONFIG_NO_MIGRATE=1")
 	keys := []string{"core.follow-references", "core.autosync", "core.notifications", "show.autoclip", "age.usekeychain", "age.agent-enabled", "age.sshkeys"}
 	env = append(env, fmt.Sprintf("GOPASS_CONFIG_COUNT=%d", len(keys)))
 	for i, key := range keys {
@@ -287,6 +291,14 @@ func (s *gopassStore) noninteractive(ctx context.Context, args ...string) ([]byt
 		data, stderr, err = s.executeCommand(args...)
 	} else {
 		data, stderr, err = runGopassCommand(ctx, true, args...)
+	}
+	// A noninteractive GPG read cannot open pinentry. Preserve that actionable
+	// category, but never expose provider stderr, which may include secrets.
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == gopassDecryptExitCode &&
+		(bytes.Contains(stderr, []byte("gpg: decryption failed: No pinentry")) ||
+			bytes.Contains(stderr, []byte("gpg: public key decryption failed: No pinentry"))) {
+		err = errCredentialLocked
 	}
 	clearBytes(stderr)
 	if ctx.Err() != nil {

@@ -2,7 +2,9 @@
 
 Destination policies associate explicit host-key pins and destination usernames
 with an agent identity. Existing version-1 `unrestricted-local` records remain supported.
-Policy configuration is registry-based. [Forwarding](forwarding.md)
+The [key quick start](README.md#register-an-existing-key) creates a restricted
+record through the registration CLI. This page describes its policy schema and
+authorization behavior. [Forwarding](forwarding.md)
 requires the separate `--allow-forwarding` opt-in.
 
 ## Configuration
@@ -40,7 +42,9 @@ Both placeholders must contain canonical public keys: algorithm, one space,
 and base64, without comments or authorized_keys options. `public_key` is the
 user's authentication key; `host_keys` contains the server's host keys. Host pins should be verified through an independent trusted channel or an
 already verified known_hosts entry. Merely collecting a key with ssh-keyscan does not establish
-trust. There is no automatic enrollment, DNS lookup, TOFU or known_hosts import.
+trust. The policy engine performs no automatic enrollment, DNS lookup or TOFU.
+The [registration command](registration.md#register-an-existing-provider-key)
+can import already trusted pins from the specified known-hosts file.
 The registry requires owner-only permissions and trusted ancestor directories.
 Private keys stay in the selected credential store.
 
@@ -95,8 +99,11 @@ A changed policy, pin, backend reference or enablement advances the generation;
 a pending signature admitted under an older generation is discarded. Lock
 transitions also invalidate pending signatures. Existing bindings are retained.
 
-Updates should be published atomically by renaming an owner-controlled `0600`
-replacement file. A missing registry yields an empty catalog. Malformed or untrusted files
+CLI-managed records can be updated with `agent register --replace`; the complete
+replacement policy and enablement must be supplied. The
+[registry writer](registration.md#writer-and-live-reload-behavior) publishes changes
+atomically. Manually managed updates also require atomic replacement of an
+owner-controlled `0600` file. A missing registry yields an empty catalog. Malformed or untrusted files
 fail closed; a valid replacement permits recovery. Whitespace-only changes do
 not invalidate requests. There is no filesystem watcher or guarantee of
 observing a transient change restored between checks. In-memory registries

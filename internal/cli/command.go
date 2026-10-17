@@ -46,7 +46,7 @@ func newRootCommand() *cobra.Command {
 		goos:               runtime.GOOS,
 		loadConfig:         loadUserConfig,
 		runProgram: func(program string, args []string, password []byte) error {
-			return runPTY(program, args, password, os.Stdin, os.Stdout)
+			return runPTY(program, args, password, os.Stdin, os.Stdout, os.Stderr)
 		},
 		stdout: os.Stdout,
 		stderr: os.Stderr,
@@ -61,9 +61,10 @@ func newRootCommandWithDependencies(deps dependencies) *cobra.Command {
 		Short: "Run SSH or SCP with a stored password",
 		Long: `sshx retrieves a credential from Secret Service or gopass and runs OpenSSH in a new PTY.
 
-The child process uses the PTY slave as stdin, stdout, stderr, and its
-controlling terminal. sshx detects the password prompt, writes the password to
-the PTY master, and then maintains a normal interactive session.
+Fully interactive sessions use the PTY for stdin, stdout, and stderr.
+Redirected sessions preserve separate stdout and stderr, and file or pipe stdin
+passes directly to OpenSSH. The PTY handles password prompts and terminal input
+separately, sending terminal messages to stderr.
 
 Defaults are read from ~/.config/sshx/config.yaml (or $XDG_CONFIG_HOME/sshx/config.yaml).
 Explicit command-line options override file defaults.`,

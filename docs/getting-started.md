@@ -5,10 +5,9 @@
 sshx requires a Unix system and OpenSSH clients available in `${PATH}`. Windows is
 not yet supported. Release binaries target Linux AMD64 and macOS ARM64.
 
-Password connections require either direct gopass or, on Linux, a D-Bus session
-bus and Secret Service provider. Key-based connections require a registered
-software key or an optional volatile import. Provider availability and public-key
-authorization on the destination are separate prerequisites.
+Both authentication methods read credentials from a provider. Direct gopass
+needs an initialized store; Linux desktop providers need a session D-Bus and an
+available Secret Service. [Provider setup](providers.md) covers both choices.
 
 ## Installation
 
@@ -33,37 +32,19 @@ Secret Service access uses pure Go D-Bus support and does not require CGO.
 
 ## First password connection
 
-A credential must already exist in a [configured provider](providers.md).
-Discovery lists metadata without decrypting passwords:
-
-```sh
-sshx credentials list
-sshx ssh alice@server.example
-```
-
-For direct gopass, an existing entry can be selected explicitly:
-
-```sh
-sshx ssh servers/alice@server.example --credential-backend gopass
-```
-
-The expected result is an authenticated SSH session. Server host-key verification
-remains OpenSSH's responsibility. [Password authentication](password-authentication.md)
-explains credential matching, SCP, and command arguments.
+The [password guide](password-authentication.md#first-password-connection) starts
+with storing a password, checking discovery, and connecting. The remote account
+must accept password authentication. No key registration is needed.
 
 ## First public-key connection
 
-The [agent quick start](agent/README.md) covers storage and registration. Once an
-enabled record and matching remote authorized_keys entry exist:
+The [key guide](agent/README.md) starts with an existing private key, loading it
+into a provider, and registering it for one destination. The remote account must
+already authorize the matching public key. The guide uses a temporary agent
+that shuts down when SSH exits.
 
-```sh
-sshx agent run -- ssh alice@server.example
-```
-
-OpenSSH discovers registered keys through the agent; no local identity file is
-required. Private material is retrieved by the agent.
-`sshx agent run` owns the temporary agent's lifetime. Ordinary `sshx ssh` remains
-the password wrapper and does not automatically register keys or start an agent.
+`sshx ssh` selects password authentication; `sshx agent run -- ssh` makes stored
+keys available to ordinary OpenSSH. The two workflows remain separate.
 
 ## Next steps
 

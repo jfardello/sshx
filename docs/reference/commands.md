@@ -42,6 +42,9 @@ validation, comment preservation, and secure publication requirements.
 
 ## Agent registration
 
+For the first connection, follow the [key quick start](../agent/README.md).
+[Provider setup](../providers.md) contains the private-key loading commands.
+
 ```text
 sshx agent register id --backend gopass|secret-service --reference exact-reference
   [--collection alias] (--unrestricted-local | --destination user@host ...)
