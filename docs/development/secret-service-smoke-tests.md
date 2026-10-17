@@ -37,8 +37,15 @@ be tested separately with an isolated entry and optional prefix.
 ## Key-storage and cache matrix
 
 Password checks alone do not validate agent keys. A synthetic multiline key item
-requires the [registration attributes](../agent/registration.md#backend-contracts)
-and a matching public registry entry. Checks should cover successful retrieval,
+requires the [key-item attributes](../providers.md#secret-service-private-keys)
+and a matching public registration. Provision it with the provider guide's
+generic Secret Service command or its KWallet alternative, then follow the
+[CLI registration flow](../agent/README.md#register-an-existing-key).
+Check that multiline content survives retrieval and registration prints the
+matching public fingerprint. For KWallet, also verify folder/entry visibility
+in the desktop application. Record provider and desktop versions separately;
+an isolated generic provider does not establish KWallet UI compatibility.
+Checks should cover successful retrieval,
 locked refusal, duplicate IDs, mismatched keys, provider restart/path reuse and
 cancellation. Cache-enabled providers additionally require monitoring and
 revocation checks after lock, deletion, key modification and owner replacement.

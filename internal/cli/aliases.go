@@ -44,8 +44,8 @@ func loadUserConfig() (optionOverrides, error)           { return config.LoadUse
 func loadConfig(name string) (optionOverrides, error)    { return config.Load(name) }
 func decodeConfig(data []byte) (optionOverrides, error)  { return config.Decode(data) }
 func resolveConfigPath(home, xdg string) (string, error) { return config.ResolvePath(home, xdg) }
-func runPTY(program string, args []string, password []byte, stdin *os.File, stdout io.Writer) error {
-	return sshpty.Run(program, args, password, stdin, stdout)
+func runPTY(program string, args []string, password []byte, stdin *os.File, stdout, stderr io.Writer) error {
+	return sshpty.Run(program, args, password, stdin, stdout, stderr)
 }
 func parseCredentialBackend(value string) (credentialBackend, error) {
 	return credential.ParseBackend(value)

@@ -2,17 +2,16 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/jfardello/sshx/internal/config"
 	"github.com/jfardello/sshx/internal/credential"
 	"golang.org/x/crypto/ssh"
 )
 
 const maxAgentCachedSigners = 16
-const maxAgentCacheTTL = 5 * time.Minute
 
 type AgentCacheStats struct{ Hits, Misses, Bypasses, Evictions uint64 }
 type agentSignerCache struct {
@@ -43,8 +42,8 @@ func newAgentSignerCache() *agentSignerCache {
 }
 
 func (s *agentServer) SetCacheTTL(ttl time.Duration) error {
-	if ttl < 0 || ttl > maxAgentCacheTTL {
-		return errors.New("agent cache TTL must be between 0 and 5m")
+	if err := config.ValidateAgentCacheTTL(ttl); err != nil {
+		return err
 	}
 	s.keys.stateMutex.Lock()
 	defer s.keys.stateMutex.Unlock()

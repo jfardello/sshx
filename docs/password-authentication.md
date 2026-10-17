@@ -1,9 +1,53 @@
 # Password authentication and file transfers
 
-The password wrapper resolves one credential, starts OpenSSH in a controlling
-pseudo-terminal, and supplies the password when its prompt is detected. The
-password is not placed in command arguments or environment variables. Subsequent
-input and output pass through to the interactive session.
+sshx supplies a stored password to OpenSSH for interactive connections, remote
+commands and file transfers. [Key authentication](agent/README.md) uses a separate
+agent workflow.
+
+## First password connection
+
+After [installation](getting-started.md#installation), choose a provider and
+[store the remote account password](providers.md). The server must accept
+password authentication. No agent registration is needed.
+
+For Secret Service, including GNOME Keyring or KWallet:
+
+```sh
+sshx credentials list alice@server.example --credential-backend secret-service
+sshx ssh alice@server.example --credential-backend secret-service
+```
+
+For direct gopass:
+
+```sh
+sshx credentials list alice@server.example --credential-backend gopass
+sshx ssh servers/alice@server.example --credential-backend gopass
+```
+
+Discovery should show the intended entry; the connection should open an
+authenticated session. On a first connection, OpenSSH may ask to trust the server
+host key; its fingerprint must match an independently trusted source. A discovery
+row proves metadata lookup, not that the password is correct.
+
+After the first connection, backend selection and other defaults can be saved
+with [configuration commands](configuration.md#inspecting-and-editing-settings).
+The remaining sections cover remote commands, discovery details and transfers.
+
+## Redirected streams
+
+Redirected stdout and stderr remain separate, and file or pipe input passes
+directly to OpenSSH. Password prompts and terminal messages go to stderr, so
+binary transfers can use normal shell redirection:
+
+```sh
+sshx alice@server.example tar czf - /tmp/foo > test.tar.gz
+sshx alice@server.example 'cat > /tmp/input.bin' < input.bin
+```
+
+Terminal input still supports interactive prompts when output is redirected.
+As with OpenSSH, explicitly requesting a remote terminal with `-t` or `-tt` can
+change remote stream behavior; use a session without a remote terminal for
+binary transfers.
 
 ## SSH connections
 

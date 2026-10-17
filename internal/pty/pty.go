@@ -41,7 +41,19 @@ func (w *lockedWriter) Write(p []byte) (int, error) {
 	return w.w.Write(p)
 }
 
-func Run(program string, args []string, password []byte, stdin *os.File, stdout io.Writer) (returnErr error) {
+// Run uses a shared terminal for fully interactive sessions. Redirected streams
+// bypass the terminal so binary data and EOF retain their normal semantics.
+func Run(program string, args []string, password []byte, stdin *os.File, stdout, stderr io.Writer) error {
+	interactive := term.IsTerminal(int(stdin.Fd())) && isTerminal(stdout) && isTerminal(stderr)
+	return run(program, args, password, stdin, stdout, stderr, interactive)
+}
+
+func isTerminal(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	return ok && term.IsTerminal(int(f.Fd()))
+}
+
+func run(program string, args []string, password []byte, stdin *os.File, stdout, stderr io.Writer, interactive bool) (returnErr error) {
 	command := exec.Command(program, args...)
 
 	var size *pty.Winsize
@@ -52,7 +64,24 @@ func Run(program string, args []string, password []byte, stdin *os.File, stdout 
 		}
 	}
 
-	ptmx, err := pty.StartWithSize(command, size)
+	var ptmx *os.File
+	var control *os.File
+	var err error
+	terminalOutput := stdout
+	if interactive {
+		ptmx, err = pty.StartWithSize(command, size)
+	} else {
+		// Both the child's stderr and /dev/tty can produce diagnostics.
+		// Files support concurrent writes and must retain their terminal status.
+		diagnostics := stderr
+		if _, ok := stderr.(*os.File); !ok {
+			diagnostics = &lockedWriter{w: stderr}
+		}
+		terminalOutput = diagnostics
+		command.Stdin, command.Stdout, command.Stderr = stdin, stdout, diagnostics
+		command.WaitDelay = 250 * time.Millisecond
+		ptmx, control, err = startWithControllingTerminal(command, size, stdinIsTerminal)
+	}
 	if err != nil {
 		return err
 	}
@@ -61,6 +90,9 @@ func Run(program string, args []string, password []byte, stdin *os.File, stdout 
 	sessionDone := make(chan struct{})
 	defer close(sessionDone)
 	defer ptmx.Close()
+	if control != nil {
+		defer control.Close()
+	}
 
 	if stdinIsTerminal {
 		state, rawErr := term.MakeRaw(int(stdin.Fd()))
@@ -108,14 +140,19 @@ func Run(program string, args []string, password []byte, stdin *os.File, stdout 
 		}
 	}()
 
-	go copyInput(stdin, input, sessionDone)
+	if interactive || stdinIsTerminal {
+		go copyInput(stdin, input, sessionDone)
+	}
 
 	outputDone := make(chan error, 1)
 	go func() {
-		outputDone <- copyOutputAndAnswer(ptmx, stdout, input, password)
+		outputDone <- copyOutputAndAnswer(ptmx, terminalOutput, input, password)
 	}()
 
 	waitErr := command.Wait()
+	if control != nil {
+		_ = control.Close()
+	}
 	var readErr error
 	select {
 	case readErr = <-outputDone:
@@ -141,6 +178,38 @@ func Run(program string, args []string, password []byte, stdin *os.File, stdout 
 		return &ExitCodeError{code: code}
 	}
 	return waitErr
+}
+
+func startWithControllingTerminal(command *exec.Cmd, size *pty.Winsize, terminalStdin bool) (*os.File, *os.File, error) {
+	master, slave, err := pty.Open()
+	if err != nil {
+		return nil, nil, err
+	}
+	if size != nil {
+		if err := pty.Setsize(master, size); err != nil {
+			_ = master.Close()
+			_ = slave.Close()
+			return nil, nil, err
+		}
+	}
+	if terminalStdin {
+		// Retain interactive input (including host-key confirmations) when only
+		// output is redirected. File and pipe input always bypass the PTY.
+		command.Stdin = slave
+	}
+	// Ctty names a descriptor in the child. Keep fd 0 available for real stdin;
+	// OpenSSH opens /dev/tty independently when it needs a password.
+	ctty := 3 + len(command.ExtraFiles)
+	command.ExtraFiles = append(command.ExtraFiles, slave)
+	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: ctty}
+	if err := command.Start(); err != nil {
+		_ = master.Close()
+		_ = slave.Close()
+		return nil, nil, err
+	}
+	// OpenSSH closes inherited descriptors before opening /dev/tty. Keep a
+	// slave reference until it exits so the master cannot see a premature EIO.
+	return master, slave, nil
 }
 
 func copyInput(stdin io.Reader, ptyInput io.Writer, sessionDone <-chan struct{}) {

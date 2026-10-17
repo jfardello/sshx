@@ -3,20 +3,12 @@ package cli
 import (
 	"fmt"
 	"strings"
+
+	"github.com/jfardello/sshx/internal/config"
 )
 
 func validateOverrides(values optionOverrides) error {
-	if values.CredentialBackend != nil {
-		if _, err := parseCredentialBackend(*values.CredentialBackend); err != nil {
-			return fmt.Errorf("invalid credential backend (expected auto, secret-service, or gopass)")
-		}
-	}
-	if values.GopassPrefix != nil && *values.GopassPrefix != "" {
-		if _, err := normalizeGopassPrefix(*values.GopassPrefix); err != nil {
-			return fmt.Errorf("invalid gopass-prefix: %w", err)
-		}
-	}
-	return nil
+	return config.Validate(values)
 }
 
 func configuredCommandOptions(invocation commandOptions, cli optionOverrides, deps dependencies) (commandOptions, error) {

@@ -2,7 +2,9 @@
 
 An agent can serve a shared foreground socket, a command-scoped socket, or a
 Linux systemd user socket. All modes use the [key registry](registration.md);
-password-command backend flags and YAML defaults do not configure the agent.
+password-command backend flags and flat YAML defaults do not configure the agent.
+The separate [`agent` configuration mapping](../configuration.md#agent-defaults)
+provides defaults overridden by explicitly supplied agent flags.
 
 ## Foreground service
 
@@ -46,7 +48,8 @@ sshx agent run -- scp './file with spaces' alice@server.example:/tmp/
 ```
 
 Arguments after `--` belong to the child. No shell or PTY is inserted; shell
-syntax requires an explicit shell. Only the child receives the private socket.
+syntax requires an explicit shell. Only the child receives the private socket;
+`agent.socket` does not change this command-scoped endpoint.
 Stale agent PID and systemd activation variables are removed from its environment.
 Input, output and error streams remain connected to the foreground terminal.
 
@@ -85,8 +88,10 @@ eval "$(sshx agent env --systemd)"
 ```
 
 The managed socket is `$XDG_RUNTIME_DIR/sshx-agent/agent.sock`, distinct from the
-standalone `sshx/` path. The first connection activates one shared foreground
-service. `env --systemd` connects and may activate it; its two-second response
+standalone `sshx/` path. A configured `agent.socket` also applies to activation
+and `env --systemd`; it must match the unit's `ListenStream`. Use `--socket=` in
+those invocations to ignore a configured path and select the managed default.
+The first connection activates one shared foreground service. `env --systemd` connects and may activate it; its two-second response
 deadline can expire before slow activation completes. A later attempt can succeed.
 
 `status --systemd` reads unit state without activation. A listening socket with an

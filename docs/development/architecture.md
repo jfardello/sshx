@@ -24,6 +24,14 @@ new session with a PTY as controlling terminal. The wrapper detects the password
 prompt, writes the password and continues stream forwarding, resize propagation
 and terminal restoration.
 
+Fully interactive sessions share the PTY for all three standard streams.
+Redirected sessions preserve separate stdout and stderr and pass file or pipe
+stdin directly to the child. A separate inherited slave descriptor establishes
+the controlling terminal for password prompts; the parent keeps the slave open
+until child exit because OpenSSH closes inherited descriptors before reopening
+`/dev/tty`. Terminal messages are forwarded to stderr. Terminal stdin retains
+its interactive relay when output is redirected.
+
 ## Agent path
 
 A public registry snapshot maps canonical public blobs to backend references and

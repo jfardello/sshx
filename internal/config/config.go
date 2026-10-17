@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
+	"unicode"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -17,14 +19,28 @@ import (
 const maxConfigBytes = 64 << 10
 const MaxBytes = maxConfigBytes
 
+const MaxAgentCacheTTL = 5 * time.Minute
+
 // A nil field is absent; a pointer to false or an empty string is an override.
 type Overrides struct {
-	CredentialBackend *string `yaml:"credential-backend"`
-	SecretCollection  *string `yaml:"secret-collection"`
-	GopassPrefix      *string `yaml:"gopass-prefix"`
-	Verbose           *bool   `yaml:"verbose"`
-	Options           *string `yaml:"options"`
-	Source            string  `yaml:"-"`
+	CredentialBackend *string         `yaml:"credential-backend"`
+	SecretCollection  *string         `yaml:"secret-collection"`
+	GopassPrefix      *string         `yaml:"gopass-prefix"`
+	Verbose           *bool           `yaml:"verbose"`
+	Options           *string         `yaml:"options"`
+	Agent             *AgentOverrides `yaml:"agent"`
+	Source            string          `yaml:"-"`
+}
+
+// Pointer fields distinguish absent settings from explicit false, zero, or empty values.
+type AgentOverrides struct {
+	Verbose           *bool          `yaml:"verbose"`
+	CacheTTL          *time.Duration `yaml:"cache-ttl"`
+	PromptHelper      *string        `yaml:"prompt-helper"`
+	AllowForwarding   *bool          `yaml:"allow-forwarding"`
+	AllowKeyMutations *bool          `yaml:"allow-key-mutations"`
+	Socket            *string        `yaml:"socket"`
+	StateFile         *string        `yaml:"state-file"`
 }
 
 type optionOverrides = Overrides
@@ -122,6 +138,9 @@ func loadConfig(name string) (optionOverrides, error) {
 
 func decodeConfig(data []byte) (optionOverrides, error) {
 	var result optionOverrides
+	if len(data) > maxConfigBytes {
+		return result, errors.New("configuration exceeds 64 KiB")
+	}
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	var document yaml.Node
 	err := decoder.Decode(&document)
@@ -140,44 +159,20 @@ func decodeConfig(data []byte) (optionOverrides, error) {
 		return result, errors.New("expected a YAML mapping")
 	}
 	root := document.Content[0]
-	if root.Anchor != "" || root.Tag != "!!map" {
-		return result, errors.New("YAML anchors and custom tags are not supported")
-	}
-	seen := make(map[string]bool)
-	for i := 0; i < len(root.Content); i += 2 {
-		key, value := root.Content[i], root.Content[i+1]
-		if key.Kind != yaml.ScalarNode || key.Tag != "!!str" || key.Anchor != "" {
-			return result, fmt.Errorf("invalid configuration key on line %d", key.Line)
-		}
-		expected := "!!str"
-		switch key.Value {
-		case "credential-backend", "secret-collection", "gopass-prefix", "options":
-		case "verbose":
-			expected = "!!bool"
-		default:
-			return result, fmt.Errorf("unknown configuration key on line %d", key.Line)
-		}
-		if seen[key.Value] {
-			return result, fmt.Errorf("duplicate configuration key %q on line %d", key.Value, key.Line)
-		}
-		seen[key.Value] = true
-		if value.Kind != yaml.ScalarNode || value.Tag != expected || value.Anchor != "" {
-			return result, fmt.Errorf("invalid type for %s on line %d", key.Value, value.Line)
-		}
-		if key.Value == "verbose" && value.Value != "true" && value.Value != "false" {
-			return result, errors.New("verbose must be true or false")
-		}
+	if err := validateMapping(root, "configuration"); err != nil {
+		return result, err
 	}
 	if err := root.Decode(&result); err != nil {
 		return optionOverrides{}, errors.New("invalid configuration fields")
 	}
-	if err := validateOverrides(result); err != nil {
+	if err := Validate(result); err != nil {
 		return optionOverrides{}, err
 	}
 	return result, nil
 }
 
-func validateOverrides(values optionOverrides) error {
+// Validate checks configuration values without command-specific or filesystem checks.
+func Validate(values Overrides) error {
 	if values.CredentialBackend != nil {
 		switch *values.CredentialBackend {
 		case "auto", "secret-service", "gopass":
@@ -188,6 +183,106 @@ func validateOverrides(values optionOverrides) error {
 	if values.GopassPrefix != nil && *values.GopassPrefix != "" {
 		if _, err := normalizeGopassPrefix(*values.GopassPrefix); err != nil {
 			return fmt.Errorf("invalid gopass-prefix: %w", err)
+		}
+	}
+	if values.Agent != nil {
+		return ValidateAgent(*values.Agent)
+	}
+	return nil
+}
+
+func validateOverrides(values optionOverrides) error { return Validate(values) }
+
+// ValidateAgentCacheTTL accepts zero (no caching) through MaxAgentCacheTTL.
+func ValidateAgentCacheTTL(ttl time.Duration) error {
+	if ttl < 0 || ttl > MaxAgentCacheTTL {
+		return errors.New("agent.cache-ttl must be between zero and five minutes")
+	}
+	return nil
+}
+
+// ValidateAgent checks scalar values only; runtime owns path existence and trust.
+func ValidateAgent(values AgentOverrides) error {
+	if values.CacheTTL != nil {
+		if err := ValidateAgentCacheTTL(*values.CacheTTL); err != nil {
+			return err
+		}
+	}
+	for _, field := range []struct {
+		name  string
+		value *string
+	}{
+		{"prompt-helper", values.PromptHelper},
+		{"socket", values.Socket},
+		{"state-file", values.StateFile},
+	} {
+		if field.value == nil || *field.value == "" {
+			continue
+		}
+		value := *field.value
+		if !filepath.IsAbs(value) || filepath.Clean(value) != value || strings.ContainsFunc(value, unicode.IsControl) {
+			return fmt.Errorf("agent.%s must be empty or an absolute clean path without control characters", field.name)
+		}
+	}
+	return nil
+}
+
+// Only known schema names are ever incorporated into diagnostics.
+func validateMapping(node *yaml.Node, scope string) error {
+	if node.Kind != yaml.MappingNode || node.Tag != "!!map" || node.Anchor != "" {
+		return fmt.Errorf("invalid mapping for %s on line %d", scope, node.Line)
+	}
+	seen := make(map[string]bool)
+	for i := 0; i < len(node.Content); i += 2 {
+		key, value := node.Content[i], node.Content[i+1]
+		if key.Kind != yaml.ScalarNode || key.Tag != "!!str" || key.Anchor != "" {
+			return fmt.Errorf("invalid %s key on line %d", scope, key.Line)
+		}
+		expected := ""
+		if scope == "configuration" {
+			switch key.Value {
+			case "credential-backend", "secret-collection", "gopass-prefix", "options":
+				expected = "!!str"
+			case "verbose":
+				expected = "!!bool"
+			case "agent":
+				expected = "!!map"
+			}
+		} else {
+			switch key.Value {
+			case "cache-ttl", "prompt-helper", "socket", "state-file":
+				expected = "!!str"
+			case "verbose", "allow-forwarding", "allow-key-mutations":
+				expected = "!!bool"
+			}
+		}
+		if expected == "" {
+			return fmt.Errorf("unknown %s key on line %d", scope, key.Line)
+		}
+		name := key.Value
+		if scope != "configuration" {
+			name = scope + "." + name
+		}
+		if seen[key.Value] {
+			return fmt.Errorf("duplicate key %s on line %d", name, key.Line)
+		}
+		seen[key.Value] = true
+		if expected == "!!map" {
+			if err := validateMapping(value, name); err != nil {
+				return err
+			}
+			continue
+		}
+		if value.Kind != yaml.ScalarNode || value.Tag != expected || value.Anchor != "" {
+			return fmt.Errorf("invalid type for %s on line %d", name, value.Line)
+		}
+		if expected == "!!bool" && value.Value != "true" && value.Value != "false" {
+			return fmt.Errorf("%s must be true or false on line %d", name, value.Line)
+		}
+		if name == "agent.cache-ttl" {
+			if _, err := time.ParseDuration(value.Value); err != nil {
+				return fmt.Errorf("invalid duration for %s on line %d", name, value.Line)
+			}
 		}
 	}
 	return nil

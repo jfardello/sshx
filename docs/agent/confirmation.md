@@ -9,7 +9,10 @@ signers for supported monitored providers.
 
 ## Enable and run
 
-Registry version 2 and `"confirm": true` are required for per-request approval. This applies to both `unrestricted-local` and `destination-constrained`
+Registration's `--confirm` option sets the version-2 `"confirm": true` field
+required for per-request approval. Existing records need `--replace` with the
+complete desired policy and enablement; see [registration](registration.md).
+This applies to both `unrestricted-local` and `destination-constrained`
 policies. The existing host-pin rules remain unchanged. Duplicate public-key
 aliases must agree on confirmation as well as their other security properties.
 Version 1 cannot enable confirmation. Identity listing never prompts.
@@ -46,7 +49,9 @@ The service needs the appropriate desktop session routing (`DISPLAY` and, when
 needed, `XAUTHORITY`) for Tk. No display, missing Tk, cancellation, or helper
 failure denies the operation. Nothing falls back to daemon stdin, SSH terminal
 prompts, or a remote channel. This is not a universal desktop UI integration.
-`--prompt-helper` is an agent CLI option, independent of the SSH/SCP YAML settings.
+`--prompt-helper` overrides the separate `agent.prompt-helper` configuration
+default. Password-command settings do not configure it; see
+[agent defaults](../configuration.md#agent-defaults).
 
 ## What approval means
 

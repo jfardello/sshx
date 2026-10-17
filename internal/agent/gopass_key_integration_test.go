@@ -3,12 +3,14 @@ package agent
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/jfardello/sshx/internal/credential"
 	"github.com/jfardello/sshx/internal/credential/gopass"
 )
 
@@ -78,8 +80,8 @@ func TestGopassKeyIntegration(t *testing.T) {
 			data, err := store.KeyMaterial(ctx, credentialRef{Backend: credentialBackendGopass, ID: "test-key"})
 			defer clearBytes(data)
 			if protected {
-				if err == nil || len(data) != 0 {
-					t.Fatal("locked GPG keyring yielded material")
+				if !errors.Is(err, credential.ErrLocked) || len(data) != 0 {
+					t.Fatalf("locked GPG keyring: error=%v, bytes=%d; want ErrLocked and no material", err, len(data))
 				}
 				return
 			}
