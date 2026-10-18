@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jfardello/sshx/internal/promptprotocol"
 )
 
 // The subprocess gives the library a fresh executable lookup cache. A fake
@@ -95,6 +97,74 @@ func TestZenityNativeOptions(t *testing.T) {
 			}
 			if strings.Contains(args, "--entry-text") {
 				t.Fatal("prepopulated passphrase")
+			}
+		})
+	}
+}
+
+func TestZenityNativeSelection(t *testing.T) {
+	if mode := os.Getenv("SSHX_SELECTION_ADAPTER_TEST"); mode != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if mode == "context" {
+			cancel()
+		}
+		d := promptprotocol.SelectionDisplay{Label: "same", Target: "alice@host", Backend: "gopass"}
+		index, approved, err := (Zenity{}).Select(ctx, []promptprotocol.SelectionDisplay{d, d})
+		switch mode {
+		case "last":
+			if err != nil || !approved || index != 1 {
+				t.Fatal("duplicate display retargeted", index, err)
+			}
+		case "cancel", "empty":
+			if err != nil || approved || index != -1 {
+				t.Fatal("cancellation accepted", index, err)
+			}
+		default:
+			if err != ErrFailed || approved || index != -1 {
+				t.Fatal("failure escaped", index, err)
+			}
+		}
+		return
+	}
+	for _, mode := range []string{"last", "cancel", "empty", "unknown", "error", "context"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			marker := filepath.Join(dir, "args")
+			script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > '" + marker + "'\n"
+			switch mode {
+			case "last":
+				script += "for item do last=$item; done\nprintf '%s\\n' \"$last\"\n"
+			case "cancel":
+				script += "exit 1\n"
+			case "unknown":
+				script += "printf '1. forged choice\\n'\n"
+			case "error":
+				script += "echo sensitive-error >&2\nexit 2\n"
+			}
+			if err := os.WriteFile(filepath.Join(dir, "zenity"), []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(os.Args[0], "-test.run=^TestZenityNativeSelection$")
+			cmd.Env = append(os.Environ(), "PATH="+dir, "SSHX_SELECTION_ADAPTER_TEST="+mode)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("adapter %v %s", err, output)
+			}
+			if mode == "context" {
+				return
+			}
+			data, err := os.ReadFile(marker)
+			if err != nil {
+				t.Fatal(err)
+			}
+			args := "\n" + string(data)
+			for _, value := range []string{"--list", "Select once", "Cancel", "1. same | alice@host | gopass | ", "2. same | alice@host | gopass | "} {
+				if !strings.Contains(args, "\n"+value+"\n") {
+					t.Fatal("missing list option", value)
+				}
+			}
+			if strings.Contains(args, "--multiple") {
+				t.Fatal("multiple choice enabled")
 			}
 		})
 	}

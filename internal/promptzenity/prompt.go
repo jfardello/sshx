@@ -3,10 +3,9 @@ package promptzenity
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
-	"strconv"
-	"strings"
 
 	"github.com/jfardello/sshx/internal/promptprotocol"
 	"github.com/jfardello/sshx/internal/sensitive"
@@ -25,8 +24,7 @@ type Dialogs interface {
 // PlainText retains every identity byte visibly, escaping Unicode, controls,
 // markup delimiters and backslashes so display text cannot inject another field.
 func PlainText(value string) string {
-	quoted := strconv.QuoteToASCII(value)
-	return strings.NewReplacer("<", `\u003c`, ">", `\u003e`, "&", `\u0026`, "'", `\u0027`).Replace(quoted)
+	return `"` + promptprotocol.DisplayText(value) + `"`
 }
 
 func Description(r promptprotocol.Request) string {
@@ -43,10 +41,21 @@ func Description(r promptprotocol.Request) string {
 // Serve handles exactly one request and produces no stdout until a complete
 // decision is available. The process supervisor bounds blocking I/O and time.
 func Serve(ctx context.Context, in io.Reader, out io.Writer, dialogs Dialogs) error {
-	input, err := io.ReadAll(io.LimitReader(in, promptprotocol.MaxBytes+1))
+	input, err := io.ReadAll(io.LimitReader(in, promptprotocol.MaxSelectionRequestBytes+1))
 	defer sensitive.Clear(input)
 	if err != nil || ctx.Err() != nil {
 		return ErrFailed
+	}
+	// This only routes the bounded envelope. Each version's strict decoder
+	// subsequently validates all fields, duplicates and its own size limit.
+	var envelope struct {
+		Version int `json:"version"`
+	}
+	if json.Unmarshal(input, &envelope) != nil {
+		return ErrFailed
+	}
+	if envelope.Version == 2 {
+		return serveSelection(ctx, input, out, dialogs)
 	}
 	r, err := promptprotocol.DecodeRequest(input)
 	if err != nil {

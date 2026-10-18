@@ -32,8 +32,9 @@ sshx agent run --prompt-helper "$HOME/.local/bin/sshx-prompt-zenity" -- \
 
 Release archives also contain the helper. Confirmation offers **Allow once** and
 **Reject**, with Reject as the default. Passphrase entry is masked; empty input
-denies the request. Each invocation handles one version-1 request and exits.
-The helper neither selects password credentials nor implements desktop selection.
+denies the request. Each invocation handles one request and exits. The helper also
+supports the separate [version-2 credential-selection protocol](../reference/credential-selection.md).
+Password SSH CLI integration for desktop selection is not exposed yet.
 
 The existing optional Tk helper at `contrib/prompt/sshx-prompt` remains supported
 for version 1. It uses `/usr/bin/python3` in isolated mode and Python's Tk library:

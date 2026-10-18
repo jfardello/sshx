@@ -124,6 +124,13 @@ def main():
                                key_fingerprint="SHA256:" + base64.b64encode(bytes(32)).decode().rstrip("="),
                                data_digest="b" * 64, algorithm="ssh-ed25519",
                                destination={"status": "unknown"})
+                if operation == "select-credential":
+                    # Deliberately identical metadata: only ordinal rows/tokens
+                    # distinguish the choices, never a lookup by label/target.
+                    request = dict(version=2, request_id="a" * 64, operation=operation,
+                                   options=[dict(token=token * 64, display=dict(
+                                       label="same label", target="alice@host",
+                                       backend="gopass", collection="")) for token in ("b", "c")])
                 process = subprocess.Popen([executable], env=env, stdin=subprocess.PIPE,
                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 process.stdin.write(json.dumps(request).encode())
@@ -143,11 +150,11 @@ def main():
                 process.wait()
                 raise RuntimeError("dialog did not appear")
 
-            def finish(process):
+            def finish(process, version=1):
                 out, err = process.communicate(timeout=5)
                 assert process.returncode == 0 and not err, (process.returncode, err)
                 response = json.loads(out)
-                assert response["request_id"] == "a" * 64 and response["version"] == 1
+                assert response["request_id"] == "a" * 64 and response["version"] == version
                 return response
 
             def wait_closed():
@@ -186,8 +193,24 @@ def main():
             assert finish(process)["approved"] is False
             print("PASS: empty passphrase denies")
 
+            process = launch("select-credential")
+            key("Escape")
+            response = finish(process, version=2)
+            assert response["approved"] is False and "token" not in response
+            wait_closed()
+            print("PASS: selection cancellation has no token")
+
+            process = launch("select-credential")
+            key("Home")
+            key("Down")
+            key("Return")
+            response = finish(process, version=2)
+            assert response["approved"] and response["token"] == "c" * 64
+            wait_closed()
+            print("PASS: duplicate labels return the second original token")
+
             for sig in (signal.SIGTERM, signal.SIGKILL):
-                process = launch("passphrase")
+                process = launch("select-credential")
                 process.send_signal(sig)
                 out, _ = process.communicate(timeout=5)
                 assert not out and process.returncode != 0

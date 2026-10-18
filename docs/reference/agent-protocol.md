@@ -144,7 +144,9 @@ Request IDs and data digests are exactly 64 lowercase hexadecimal characters;
 key and verified host fingerprints use canonical unpadded SHA256 base64.
 Unknown destinations cannot carry host or username assertions. Verified
 destinations require both host fingerprint and username. Both helpers remain
-explicitly configured; their protocol does not support credential selection.
+explicitly configured. Version 1 does not support credential selection; the
+Zenity helper implements a separate [version-2 selection protocol](credential-selection.md).
+The agent continues to send version-1 requests with 16 KiB request/response bounds.
 
 
 ## Further reading

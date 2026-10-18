@@ -20,6 +20,7 @@
 - Reference
   - [Commands](reference/commands.md)
   - [Agent protocol](reference/agent-protocol.md)
+  - [Desktop credential selection](reference/credential-selection.md)
 - Development
   - [Roadmap](development/roadmap.md)
   - [Architecture](development/architecture.md)

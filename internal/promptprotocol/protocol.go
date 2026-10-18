@@ -1,5 +1,6 @@
-// Package promptprotocol implements the version-1 desktop signing prompt wire format.
-// It does not authorize signing or interpret destination proofs.
+// Package promptprotocol implements separate version-1 signing and version-2
+// credential-selection wire formats. It neither authorizes signing nor retrieves
+// credentials; callers retain all private material and exact provider references.
 package promptprotocol
 
 import (

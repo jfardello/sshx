@@ -1,4 +1,5 @@
-// sshx-prompt-zenity handles one private version-1 agent prompt per invocation.
+// sshx-prompt-zenity handles one private signing or credential-selection prompt
+// per invocation. Each protocol retains its own validation and resource bounds.
 package main
 
 import (

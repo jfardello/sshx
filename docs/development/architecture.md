@@ -14,8 +14,9 @@ and native agent work to internal packages.
 | `internal/credential/secretservice` | D-Bus adapter and provider monitoring |
 | `internal/keystore` | Backend key-store construction |
 | `internal/helperexec` | Trusted local helper execution over private pipes |
-| `internal/promptprotocol` | Strict version-1 prompt requests and response encoding |
+| `internal/promptprotocol` | Separate strict version-1 signing and version-2 selection protocols |
 | `internal/promptzenity` | Prompt rendering and injectable Zenity dialog adapter |
+| `internal/desktopselect` | Bounded version-2 caller returning an original candidate index |
 | `internal/pty` | Password-mode controlling PTY and stream forwarding |
 | `internal/agent` | Registry, socket protocol, policies, signing and lifecycle |
 | `internal/sensitive` | Owned sensitive-buffer cleanup |
