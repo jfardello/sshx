@@ -137,7 +137,14 @@ The helper receives only a fixed PATH/LANG plus HOME and selected desktop routin
 variables. It does not inherit agent sockets, activation descriptors, GPG/gopass
 configuration, loader overrides or arbitrary caller variables. stderr is discarded;
 `--verbose` reports only fixed, secret-safe categories in the agent. The optional
-Tk helper defaults confirmation to No and uses masked passphrase input.
+Tk helper defaults confirmation to No and uses masked passphrase input. The
+optional [Zenity helper](../agent/confirmation.md#enable-and-run) uses the same
+version-1 messages, requires all documented request fields and defaults to Reject.
+Request IDs and data digests are exactly 64 lowercase hexadecimal characters;
+key and verified host fingerprints use canonical unpadded SHA256 base64.
+Unknown destinations cannot carry host or username assertions. Verified
+destinations require both host fingerprint and username. Both helpers remain
+explicitly configured; their protocol does not support credential selection.
 
 
 ## Further reading

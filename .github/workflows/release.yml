@@ -81,6 +81,10 @@ jobs:
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
             go build -trimpath -o "${RUNNER_TEMP}/sshx-darwin-arm64" ./cmd/sshx
           file "${RUNNER_TEMP}/sshx-darwin-arm64"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -trimpath -o "${RUNNER_TEMP}/sshx-prompt-zenity-linux-amd64" ./cmd/sshx-prompt-zenity
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
+            go build -trimpath -o "${RUNNER_TEMP}/sshx-prompt-zenity-darwin-arm64" ./cmd/sshx-prompt-zenity
 
       - name: Validate GoReleaser configuration
         uses: goreleaser/goreleaser-action@v7

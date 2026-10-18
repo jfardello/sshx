@@ -54,6 +54,8 @@ func TestCLIProcessSignalsAndExitStatus(t *testing.T) {
 	t.Setenv("SSHX_ENTRY_TEST", "1")
 	t.Setenv("XDG_RUNTIME_DIR", dir)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
+	// Never contend with a running agent's persistent mutation-state lock.
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
 	ready := filepath.Join(dir, "ready")
 	t.Setenv("SSHX_ENTRY_READY", ready)
 	command := func(args ...string) *exec.Cmd {

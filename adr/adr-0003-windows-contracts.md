@@ -21,9 +21,9 @@ an option. These terms do not imply acceptance or implementation of this draft.
 | Existing seam | Platform dependency / required split |
 | --- | --- |
 | `internal/pty/pty.go` | Unix PTY, signals/process groups, repeated EOT injection; session mechanics must be separate from bounded one-time password detection |
-| `internal/agent/agent_server.go`, `endpoint.go` | Concrete Unix listener/connection, UID/mode/stat traversal and socket cleanup; authenticated endpoint ownership must be separate from protocol |
-| `agent_registry.go`, `agent_mutation_state.go`, `internal/config/config.go` | Descriptor-relative access/locks/rename or nonblocking file open; Windows operations must provide handle/access checks without relaxing domain validation |
-| `internal/agent/agent_confirm.go` | Executable UID/mode trust, curated Unix environment, process-group cancellation; trusted launching and private-pipe lifecycle must be isolated |
+| `internal/agent/server.go`, `endpoint.go` | Concrete Unix listener/connection, UID/mode/stat traversal and socket cleanup; authenticated endpoint ownership must be separate from protocol |
+| `registry_read.go`, `service_mutation_state.go`, `internal/config/config.go` | Descriptor-relative access/locks/rename or nonblocking file open; Windows operations must provide handle/access checks without relaxing domain validation |
+| `internal/agent/prompt.go`, `internal/helperexec/helperexec.go` | Executable UID/mode trust, curated Unix environment, process-group cancellation; trusted launching and private-pipe lifecycle must be isolated |
 | `internal/credential/gopass/gopass.go` | `Setpgid`/`Kill`, PATH discovery and noninteractive provider environment; owned executable processes must be isolated |
 | `internal/cli/agent.go`, `agent_systemd.go` | Unix runtime paths, signals, sh/zsh output and Linux systemctl; platform lifecycle and environment formatting must be separate |
 | `internal/cli/command.go:isRemoteOperand` | Any interior colon means remote; drive-letter operands must have explicit local classification |

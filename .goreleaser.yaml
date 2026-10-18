@@ -27,6 +27,24 @@ builds:
         goarch: arm64
       - goos: darwin
         goarch: amd64
+  - id: sshx-prompt-zenity
+    main: ./cmd/sshx-prompt-zenity
+    binary: sshx-prompt-zenity
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: linux
+        goarch: arm64
+      - goos: darwin
+        goarch: amd64
 
 archives:
   - id: sshx

@@ -6,6 +6,7 @@ and native agent work to internal packages.
 | Package | Responsibility |
 | --- | --- |
 | `cmd/sshx` | Executable entry point |
+| `cmd/sshx-prompt-zenity` | Optional desktop helper supervisor and dialog worker |
 | `internal/cli` | Command parsing, credential selection, agent lifecycle |
 | `internal/config` | Strict YAML defaults and precedence |
 | `internal/credential` | Shared credential contracts |
@@ -13,6 +14,8 @@ and native agent work to internal packages.
 | `internal/credential/secretservice` | D-Bus adapter and provider monitoring |
 | `internal/keystore` | Backend key-store construction |
 | `internal/helperexec` | Trusted local helper execution over private pipes |
+| `internal/promptprotocol` | Strict version-1 prompt requests and response encoding |
+| `internal/promptzenity` | Prompt rendering and injectable Zenity dialog adapter |
 | `internal/pty` | Password-mode controlling PTY and stream forwarding |
 | `internal/agent` | Registry, socket protocol, policies, signing and lifecycle |
 | `internal/sensitive` | Owned sensitive-buffer cleanup |
@@ -34,6 +37,11 @@ until child exit because OpenSSH closes inherited descriptors before reopening
 its interactive relay when output is redirected.
 
 ## Agent path
+
+The agent remains one Go package, with filenames grouped by responsibility.
+Its [package reading guide](https://github.com/jfardello/sshx/blob/main/internal/agent/doc.go) maps those groups,
+shared test fixtures and state ownership. Start with the API, server and protocol
+adapter, then follow the signing service into policy and key handling.
 
 A public registry snapshot maps canonical public blobs to backend references and
 policies. Each accepted socket gets its own connection adapter and verified

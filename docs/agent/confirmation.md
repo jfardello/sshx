@@ -17,9 +17,26 @@ policies. The existing host-pin rules remain unchanged. Duplicate public-key
 aliases must agree on confirmation as well as their other security properties.
 Version 1 cannot enable confirmation. Identity listing never prompts.
 
-The repository includes an optional desktop helper at `contrib/prompt/sshx-prompt`.
-It uses `/usr/bin/python3` in isolated mode and Python's Tk library. An
-owner-controlled installation can be prepared from a source checkout:
+The optional `sshx-prompt-zenity` executable handles signing confirmation and
+masked OpenSSH passphrase entry. On Linux it requires a local Zenity-compatible
+dialog program (`qarma`, `zenity` or `matedialog`, in that lookup order); on macOS
+it uses the system `osascript`. A source installation can be prepared with:
+
+```sh
+go build -o sshx-prompt-zenity ./cmd/sshx-prompt-zenity
+install -d -m 0700 "$HOME/.local/bin"
+install -m 0700 sshx-prompt-zenity "$HOME/.local/bin/sshx-prompt-zenity"
+sshx agent run --prompt-helper "$HOME/.local/bin/sshx-prompt-zenity" -- \
+  ssh alice@server.example
+```
+
+Release archives also contain the helper. Confirmation offers **Allow once** and
+**Reject**, with Reject as the default. Passphrase entry is masked; empty input
+denies the request. Each invocation handles one version-1 request and exits.
+The helper neither selects password credentials nor implements desktop selection.
+
+The existing optional Tk helper at `contrib/prompt/sshx-prompt` remains supported
+for version 1. It uses `/usr/bin/python3` in isolated mode and Python's Tk library:
 
 ```sh
 install -d -m 0700 "$HOME/.local/bin"
@@ -49,9 +66,12 @@ ExecStart=/home/alice/.local/bin/sshx agent start --foreground --socket-activati
 ```
 
 The units should be reloaded and the service restarted after configuration changes.
-The service needs the appropriate desktop session routing (`DISPLAY` and, when
-needed, `XAUTHORITY`) for Tk. No display, missing Tk, cancellation, or helper
-failure denies the operation. Nothing falls back to daemon stdin, SSH terminal
+The example uses the Tk installation path; a Zenity installation uses
+`/home/alice/.local/bin/sshx-prompt-zenity` instead. The service needs appropriate
+desktop session routing (`DISPLAY`, `WAYLAND_DISPLAY`, and when needed
+`XAUTHORITY`, `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS`). No display,
+missing dialog dependencies, cancellation, or helper failure denies the operation.
+Nothing falls back to daemon stdin, SSH terminal
 prompts, or a remote channel. This is not a universal desktop UI integration.
 `--prompt-helper` overrides the separate `agent.prompt-helper` configuration
 default. Password-command settings do not configure it; see
@@ -82,6 +102,13 @@ not confirmation. With `confirm: false`, only fresh key decryption prompts.
 The machine-readable [helper protocol](../reference/agent-protocol.md#prompt-helper-protocol)
 is documented separately.
 
+The Zenity helper validates all required request fields, exact field names and
+types, IDs and destination status before showing a dialog. Unknown, duplicate,
+null or trailing fields/data are rejected. Identity values are quoted and escaped
+as ASCII, including controls, bidi characters and markup delimiters. All identity
+bytes remain represented; values are not truncated. Escaped text is display only
+and does not alter the request ID echoed in the response.
+
 ## Bounds and invalidation
 
 There are at most four active signing jobs/prompts, no unbounded approval queue,
@@ -93,6 +120,14 @@ excessive pipelining is rejected. Disconnect or shutdown cancels waiting prompts
 An oversized response also cancels its helper immediately. Process-group cleanup
 includes descendants that remain in that group; it cannot contain a descendant
 that deliberately detaches into a different group/session.
+
+The Zenity helper additionally has a 30-second local deadline covering input,
+dialog work and response collection. Its supervisor isolates the dialog worker
+in a process group and kills that group on timeout, cancellation or completion.
+A private lifetime pipe makes the worker kill its group if the supervisor dies,
+including when the agent sends SIGKILL. It never retries or opens a fallback
+prompt. Only the complete protocol response reaches stdout; errors are fixed
+and contain no request, passphrase, native stderr or underlying library details.
 
 Authorization is rechecked after confirmation, backend retrieval, passphrase
 entry and decryption, and before releasing the result after backend cleanup.
@@ -109,6 +144,9 @@ Wrong or empty passphrases fail without retry/fallback. The decrypted key must
 still match the enrolled public key. KDF computation itself is not interruptible,
 but its work is bounded and cancellation is checked before releasing any result.
 
-Owned key/passphrase/response buffers are cleared best-effort. Go parsers, JSON,
-Tk and Python can retain copies that cannot be reliably erased. The helper exits
-after each operation; no persistent passphrase storage is implemented.
+Owned key/passphrase/response buffers are cleared best-effort, including failure
+paths. Go strings, JSON encoding buffers, the Zenity library, native dialog
+processes, Tk and Python can retain copies that cannot be reliably erased.
+Passphrases travel through private pipes, never command arguments or environment
+variables. The helper exits after each operation; no persistent passphrase
+storage is implemented.

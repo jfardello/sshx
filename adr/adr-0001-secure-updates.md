@@ -17,9 +17,9 @@ Existing behavior:
 | Source | Observed behavior / constraint |
 | --- | --- |
 | `internal/config/config.go` | Strict YAML, 64 KiB limit, absent/false/empty distinction; reader follows working symlinks and validates opened regular files, but does not enforce registry ownership rules |
-| `internal/agent/agent_registry.go` | Descriptor-relative traversal rejects symlinks; trusted ancestors and owner-only regular registry; 1 MiB limit; equivalent public-key aliases collapse in runtime view |
-| `internal/agent/agent_mutation_state.go` | Validated lock file, exclusive nonblocking lifetime lock, same-directory temporary file, file sync, rename, directory sync; post-rename sync failure currently shares the generic error |
-| `internal/agent/agent_signing.go` | Effective registry changes invalidate signer caches, retire volatile imports and advance authorization generation; lock/suppression state survives |
+| `internal/agent/registry_read.go`, `registry_parse.go` | Descriptor-relative traversal rejects symlinks; trusted ancestors and owner-only regular registry; 1 MiB limit; equivalent public-key aliases collapse in runtime view |
+| `internal/agent/service_mutation_state.go` | Validated lock file, exclusive nonblocking lifetime lock, same-directory temporary file, file sync, rename, directory sync; post-rename sync failure currently shares the generic error |
+| `internal/agent/service_registry.go` | Effective registry changes invalidate signer caches, retire volatile imports and advance authorization generation; lock/suppression state survives |
 
 The state writer is a reference, not a directly reusable edit transaction: config
 and registration locks must be short-lived and publication outcomes must be explicit.

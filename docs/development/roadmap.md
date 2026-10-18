@@ -12,8 +12,11 @@ their current contracts.
 
 ## Desktop helper and password selection
 
-- Add an optional Go Zenity helper for signing approval and masked passphrase
-  entry, preserving the existing Tk helper and agent protocol.
+The optional Go Zenity helper provides signing approval and masked passphrase
+entry alongside the existing version-1 Tk helper; see
+[local confirmation](../agent/confirmation.md).
+
+- Add a separate desktop selection protocol and dialog for password credentials.
 - Add opt-in terminal or desktop credential selection for password SSH and its
   shorthand. Default behavior, SCP, and credential listing remain unchanged.
 - Select from scoped metadata before retrieving one secret; preserve terminal

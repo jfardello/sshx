@@ -19,6 +19,48 @@ When an OpenSSH client is installed, normal PTY tests also verify password
 authentication and binary archive upload/download against a disposable local
 SSH endpoint, including decompression and checksum validation.
 
+## Desktop prompt helper
+
+Normal tests inject dialogs to cover strict version-1 parsing, plain-text identity
+rendering, denial, passphrase limits and mutable-buffer cleanup. Native-adapter
+tests replace the Unix dialog executable in a subprocess and verify
+`--default-cancel`, Allow once/Reject labels and `--hide-text`. Agent tests pass
+actual generated requests through the helper and decode its responses with the
+agent's version-1 decoder. Supervisor tests cover output bounds, environment
+filtering and child cleanup on completion and timeout.
+
+The Linux native smoke fixture requires Xvfb, Zenity, libX11, libXtst and Python 3.
+It creates an isolated display and uses only a synthetic passphrase:
+
+```sh
+prompt_dir=$(mktemp -d /tmp/sshx-prompt.XXXXXX)
+go build -o "$prompt_dir/sshx-prompt-zenity" ./cmd/sshx-prompt-zenity
+python3 testdata/zenity-smoke.py "$prompt_dir/sshx-prompt-zenity"
+rm -rf "$prompt_dir"
+```
+
+The fixture checks Enter defaults to rejection, explicit approval, passphrase
+entry/base64, empty-input denial, and dialog removal after SIGTERM, SIGKILL and
+the local 30-second deadline. `SSHX_ZENITY_SMOKE_SCREENSHOT=/tmp/sshx-masked.png` optionally
+captures the synthetic masked entry for visual inspection; ImageMagick's `import`
+is then required. Real macOS dialogs and other Unix dialog programs need separate
+desktop smoke checks; cross-compilation alone does not validate their UI behavior.
+
+The dialog dependency is pinned to
+[`github.com/ncruces/zenity v0.10.15`](https://github.com/ncruces/zenity/tree/v0.10.15) (MIT,
+commit `608cae244677a9a0f77097c3d07eea492475a76c`). The source review covers
+`msg_unix.go`, `entry_unix.go`, `util.go`, `msg_darwin.go`, `entry_darwin.go` and
+`internal/zenutil/zenutil_{unix,darwin}.go`. Linux questions disable markup and
+default to cancellation; entry uses hidden text. macOS entry uses hiddenAnswer,
+and button defaults are supplied through the library. No shell interpolation is
+used. The helper escapes identity text before either platform receives it.
+The library uses `exec.CommandContext`/`Output`, which kills only its immediate
+child and retains output/string copies. The helper's supervised process group,
+lifetime pipe and local timeout provide cleanup around that behavior; these do
+not contain processes that deliberately detach. Library-owned output buffers
+and immutable strings cannot be cleared by sshx. Dependency changes require
+review of those assumptions and repeat desktop checks.
+
 ## OpenSSH interoperability
 
 ```sh
