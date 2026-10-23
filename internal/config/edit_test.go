@@ -66,8 +66,9 @@ func TestEditAllKeysAndSettings(t *testing.T) {
 		"credential-backend", "secret-collection", "gopass-prefix", "verbose", "options",
 		"agent.verbose", "agent.cache-ttl", "agent.prompt-helper", "agent.allow-forwarding",
 		"agent.allow-key-mutations", "agent.socket", "agent.state-file",
+		"ssh.ui", "ssh.prompt-helper",
 	}
-	values := []string{"gopass", "", "prefix/", "false", "true", "false", "90s", "/helper", "false", "true", "", "/state"}
+	values := []string{"gopass", "", "prefix/", "false", "true", "false", "90s", "/helper", "false", "true", "", "/state", "shell", "/ssh-helper"}
 	name := editTestPath(t)
 	stored, err := Settings(name, false)
 	if err != nil || len(stored) != 0 {
@@ -86,6 +87,8 @@ func TestEditAllKeysAndSettings(t *testing.T) {
 			want = "false"
 		case "agent.cache-ttl":
 			want = "0s"
+		case "ssh.ui":
+			want = "none"
 		}
 		if defaults[i] != (Setting{key, want, "default"}) {
 			t.Fatalf("default %d: %+v", i, defaults[i])

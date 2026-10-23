@@ -3,8 +3,8 @@
 ## Password SSH and SCP
 
 ```text
-sshx <credential> [sshx options] [remote_command]
-sshx ssh <credential> [sshx options] [remote_command]
+sshx [credential] [--ui none|shell|desktop] [sshx options] [remote_command]
+sshx ssh [credential] [--ui none|shell|desktop] [sshx options] [remote_command]
 sshx scp <credential> [sshx options] <source> <destination>
 sshx credentials list [query] [credential options]
 ```
@@ -16,12 +16,21 @@ sshx credentials list [query] [credential options]
 | `--gopass-prefix <path>` | Empty | Direct gopass scope; selects gopass in auto mode |
 | `--verbose[=true\|false]` | `false` | Password connection diagnostics |
 | `-x`, `--options <string>` | Empty | OpenSSH options inserted before the target |
+| `--ui none\|shell\|desktop` | `none` | SSH and root shorthand credential selection |
+| `--prompt-helper <absolute-path>` | Empty | SSH desktop helper setting, independent of agent helper |
 
 [Configuration](../configuration.md) defines YAML defaults, explicit CLI
 precedence, empty overrides, parsing and conflict handling. The full `options`
 string is replaced by a CLI occurrence; repeated CLI occurrences concatenate.
 A credential named after a subcommand can be selected through explicit `ssh`,
 for example `sshx ssh agent`.
+
+SSH requires a credential query with `none`; `shell` can browse the selected
+scope without one. With a query, one match connects directly and multiple matches
+prompt. Without one, the picker prompts even for a single entry. sshx options
+must precede the remote command; its remaining tokens are passed through.
+Desktop mode/settings are recognized, but a required desktop choice currently
+fails before password retrieval. See [selection](../password-authentication.md#choose-a-stored-credential).
 
 ## Persistent configuration
 

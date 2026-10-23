@@ -4,7 +4,7 @@
 
 | Mechanism | Scope |
 | --- | --- |
-| `config.yaml` | Password-command defaults and optional `agent` defaults |
+| `config.yaml` | Password-command defaults and separate `ssh`/`agent` defaults |
 | `agent.json` | Public keys, exact backend references, and per-key policies |
 | `sshx agent` flags | Agent lifecycle, helper, caching, mutations, forwarding |
 | `agent-state.json` | Machine-managed agent lock and suppression ledger |
@@ -39,7 +39,7 @@ sshx config unset agent.prompt-helper
 
 `sshx config` lists stored settings; `sshx config key` gets a setting and
 `sshx config key value` sets it. These shorthand forms match `list`, `get`, and
-`set`. Keys use dots for agent settings; underscores are accepted as aliases for
+`set`. Keys use dots for SSH and agent settings; underscores are accepted as aliases for
 hyphens, such as `agent.cache_ttl`.
 
 Get/list output quotes values so empty strings and control characters are visible.
@@ -133,6 +133,38 @@ sshx alice@server.example --credential-backend gopass \
 backend selection, that prefix must also be cleared. Conflict errors identify
 whether the
 fields came from the CLI, file, or built-in defaults.
+
+## SSH selection defaults
+
+```yaml
+ssh:
+  ui: shell
+  prompt-helper: ""
+```
+
+| YAML key | SSH CLI option | Default |
+| --- | --- | --- |
+| `ssh.ui` | `--ui none\|shell\|desktop` | `none` |
+| `ssh.prompt-helper` | `--prompt-helper <absolute-path>` | Empty |
+
+These settings apply only to explicit SSH and its root shorthand. SCP and
+credential listing ignore them. The SSH helper never inherits
+`agent.prompt-helper`. Helper paths must be empty or absolute clean paths without
+control characters; runtime owns executable availability and trust checks.
+
+```sh
+sshx config set ssh.ui shell
+sshx config set ssh.prompt-helper /home/alice/.local/bin/sshx-prompt-zenity
+sshx config get ssh.ui --effective
+sshx ssh alice@server.example --ui none --prompt-helper ""
+```
+
+Explicit `none` and an empty helper override file settings. With `shell`, omitting
+the query browses the configured provider scope, including when only one entry is
+available. See [terminal selection](password-authentication.md#choose-a-stored-credential).
+The desktop helper setting and mode are recognized, but desktop selection's SSH
+handoff remains unavailable; requests needing that choice fail without reading
+a password or falling back to a terminal picker.
 
 ## Agent defaults
 

@@ -100,6 +100,8 @@ var configEditSettings = []struct{ key, value, printed, fallback string }{
 	{"agent.allow-key-mutations", "false", "false", "false"},
 	{"agent.socket", "/not-created/agent.sock", "/not-created/agent.sock", ""},
 	{"agent.state-file", "/not-created/state", "/not-created/state", ""},
+	{"ssh.ui", "shell", "shell", "none"},
+	{"ssh.prompt-helper", "/ssh-helper", "/ssh-helper", ""},
 }
 
 func TestConfigEditShorthandExplicitAndAliases(t *testing.T) {

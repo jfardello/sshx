@@ -7,8 +7,10 @@ existing limits. The Tk helper supports version 1 only; a selection caller must
 reject its nonzero exit or incompatible response without retry or fallback.
 
 The protocol, helper dialog and internal caller are implemented. Password SSH
-CLI options and configuration for selecting credentials are not exposed yet.
-Existing SSH/SCP commands and ambiguous-match behavior remain unchanged.
+now exposes [UI options and settings](../configuration.md#ssh-selection-defaults)
+and a terminal picker. Desktop selection's SSH handoff remains pending: a request
+that needs a desktop choice fails before password retrieval. SCP and credential
+listing retain their existing behavior.
 
 ## Request
 

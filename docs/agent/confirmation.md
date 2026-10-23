@@ -34,7 +34,8 @@ Release archives also contain the helper. Confirmation offers **Allow once** and
 **Reject**, with Reject as the default. Passphrase entry is masked; empty input
 denies the request. Each invocation handles one request and exits. The helper also
 supports the separate [version-2 credential-selection protocol](../reference/credential-selection.md).
-Password SSH CLI integration for desktop selection is not exposed yet.
+Password SSH accepts separate UI settings and provides a terminal picker;
+desktop selection's SSH handoff remains pending.
 
 The existing optional Tk helper at `contrib/prompt/sshx-prompt` remains supported
 for version 1. It uses `/usr/bin/python3` in isolated mode and Python's Tk library:

@@ -68,6 +68,43 @@ splitting, not shell evaluation; quoting inside an option string does not create
 shell expansion. [Configuration](configuration.md) explains replacement of YAML
 defaults and repeated `-x` options.
 
+## Choose a stored credential
+
+The optional terminal picker browses metadata before retrieving one password:
+
+```sh
+sshx --ui shell --gopass-prefix infrastructure/production
+sshx ssh --ui shell --secret-collection Login
+sshx ssh production --ui shell
+```
+
+Without a query, the picker always opens, even for one candidate. With a query,
+an exact gopass path or one valid match connects directly; multiple matches open
+the picker and no matches fail. Existing matching precedence remains unchanged.
+Invalid target metadata fails before prompting or password retrieval.
+
+The numbered menu uses the controlling terminal, independently of redirected
+stdin/stdout. Entering a number selects that original entry; `0`, empty input,
+EOF or an interrupt cancels with status 130. Input is bounded to four digits and
+the picker has a 30-second deadline. There is no command interpreter, history,
+password-entry fallback or provider-unlock change. Terminal state and descriptors
+are restored/closed before password retrieval and OpenSSH startup.
+
+`--ui none` is the default and keeps the existing required-query and ambiguous
+listing behavior. [SSH defaults](configuration.md#ssh-selection-defaults) can
+enable the picker; a CLI `--ui none` explicitly disables a configured mode.
+SCP and `credentials list` retain their existing behavior.
+
+`desktop` is a recognized mode, and `--prompt-helper` configures an independent
+SSH helper path. Desktop selection is not yet connected to SSH: an invocation
+that needs a desktop choice fails before reading a password or starting SSH.
+The [desktop protocol](reference/credential-selection.md) documents the helper.
+
+Place sshx options before the remote command. After its first word, tokens such
+as `--ui` and `--prompt-helper` belong to the remote command. Use `-x` or
+`--options` for native OpenSSH options before an optional query; native options
+after a supplied query retain their arguments. `--` ends sshx option parsing.
+
 ## Credential discovery
 
 ```sh

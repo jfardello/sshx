@@ -29,7 +29,14 @@ type Overrides struct {
 	Verbose           *bool           `yaml:"verbose"`
 	Options           *string         `yaml:"options"`
 	Agent             *AgentOverrides `yaml:"agent"`
+	SSH               *SSHOverrides   `yaml:"ssh"`
 	Source            string          `yaml:"-"`
+}
+
+// SSHOverrides applies only to password SSH and its root shorthand.
+type SSHOverrides struct {
+	UI           *string `yaml:"ui"`
+	PromptHelper *string `yaml:"prompt-helper"`
 }
 
 // Pointer fields distinguish absent settings from explicit false, zero, or empty values.
@@ -185,8 +192,26 @@ func Validate(values Overrides) error {
 			return fmt.Errorf("invalid gopass-prefix: %w", err)
 		}
 	}
+	if values.SSH != nil {
+		if err := ValidateSSH(*values.SSH); err != nil {
+			return err
+		}
+	}
 	if values.Agent != nil {
 		return ValidateAgent(*values.Agent)
+	}
+	return nil
+}
+
+func ValidateSSH(values SSHOverrides) error {
+	if values.UI != nil && *values.UI != "none" && *values.UI != "shell" && *values.UI != "desktop" {
+		return errors.New("ssh.ui must be none, shell, or desktop")
+	}
+	if values.PromptHelper != nil && *values.PromptHelper != "" {
+		value := *values.PromptHelper
+		if !filepath.IsAbs(value) || filepath.Clean(value) != value || strings.ContainsFunc(value, unicode.IsControl) {
+			return errors.New("ssh.prompt-helper must be empty or an absolute clean path without control characters")
+		}
 	}
 	return nil
 }
@@ -245,8 +270,13 @@ func validateMapping(node *yaml.Node, scope string) error {
 				expected = "!!str"
 			case "verbose":
 				expected = "!!bool"
-			case "agent":
+			case "agent", "ssh":
 				expected = "!!map"
+			}
+		} else if scope == "ssh" {
+			switch key.Value {
+			case "ui", "prompt-helper":
+				expected = "!!str"
 			}
 		} else {
 			switch key.Value {

@@ -14,7 +14,7 @@ func newConfigCommand(deps dependencies) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "config [key [value]]",
 		Short: "Inspect and edit nonsecret user configuration",
-		Long:  "Inspect and edit user configuration. With no arguments, list stored settings; with a key, get it; with a key and value, set it. Use dotted agent keys and hyphens or underscores. Values are printed as quoted strings.",
+		Long:  "Inspect and edit user configuration. With no arguments, list stored settings; with a key, get it; with a key and value, set it. Use dotted agent/ssh keys and hyphens or underscores. Values are printed as quoted strings.",
 		Args:  cobra.MaximumNArgs(2),
 	}
 	root.SetOut(deps.stdout)

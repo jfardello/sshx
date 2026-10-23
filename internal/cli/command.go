@@ -23,6 +23,8 @@ type commandOptions struct {
 	verbose              bool
 	programOptions       []string
 	extraArgs            []string
+	ui                   string
+	promptHelper         string
 }
 
 type dependencies struct {
@@ -37,6 +39,7 @@ type dependencies struct {
 	systemctl              func(context.Context, ...string) ([]byte, error)
 	openKeyStore           func(context.Context, credential.Backend) (credential.KeyStore, error)
 	registrationPassphrase func(context.Context) ([]byte, error)
+	selectShell            func(context.Context, []credentialRef) (int, error)
 }
 
 func newRootCommand() *cobra.Command {
@@ -57,7 +60,7 @@ func NewRootCommand() *cobra.Command { return newRootCommand() }
 
 func newRootCommandWithDependencies(deps dependencies) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "sshx <target|credential> [--credential-backend <backend>] [--secret-collection <collection>] [--gopass-prefix <path>] [--verbose] [-x '<ssh opts>'] [remote_command]",
+		Use:   "sshx [target|credential] [--ui none|shell|desktop] [sshx options] [remote_command]",
 		Short: "Run SSH or SCP with a stored password",
 		Long: `sshx retrieves a credential from Secret Service or gopass and runs OpenSSH in a new PTY.
 
@@ -95,7 +98,7 @@ Explicit command-line options override file defaults.`,
 
 func newSSHCommand(deps dependencies) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:                "ssh <target|credential> [--credential-backend <backend>] [--secret-collection <collection>] [--gopass-prefix <path>] [--verbose] [-x '<ssh opts>'] [remote_command]",
+		Use:                "ssh [target|credential] [--ui none|shell|desktop] [sshx options] [remote_command]",
 		Short:              "Open an SSH session or run a remote command",
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
@@ -145,6 +148,10 @@ func isHelpRequest(args []string) bool {
 }
 
 func addPassthroughFlag(cmd *cobra.Command, program string) {
+	if program == "SSH" {
+		cmd.Flags().String("ui", "none", "credential selection: none, shell, or desktop")
+		cmd.Flags().String("prompt-helper", "", "SSH desktop helper absolute path (independent of agent helper)")
+	}
 	cmd.Flags().StringP("options", "x", "", strings.ToLower(program)+" options separated by spaces")
 	cmd.Flags().String("credential-backend", "auto", "credential backend: auto, secret-service, or gopass")
 	cmd.Flags().String("secret-collection", "", "limit Secret Service lookup (empty clears the configured collection)")
@@ -153,9 +160,9 @@ func addPassthroughFlag(cmd *cobra.Command, program string) {
 }
 
 func executeSSH(args []string, deps dependencies) (returnErr error) {
-	opts, err := parseConfiguredCommandOptions(args, deps)
+	opts, err := parseConfiguredSSHOptions(args, deps)
 	if err != nil {
-		return fmt.Errorf("usage: sshx [ssh] <target|credential> [--credential-backend <backend>] [--secret-collection <collection>] [--gopass-prefix <path>] [--verbose] [-x '<ssh opts>'] [remote_command]: %w", err)
+		return fmt.Errorf("usage: sshx [ssh] [target|credential] [--ui none|shell|desktop] [sshx options] [remote_command]: %w", err)
 	}
 
 	selection, err := selectCredentialStore(
@@ -262,8 +269,8 @@ func dependencyGOOS(deps dependencies) string {
 }
 
 // resolveCredential resolves an explicit gopass path or searches the chosen store.
-// It returns a reference without reading its password; ambiguous matches are
-// printed for the user to refine the target, with selected=false and no error.
+// It returns a reference without reading its password. With default UI, ambiguous
+// matches are printed for refinement; explicit UI selects before secret reads.
 func resolveCredential(opts commandOptions, selection selectedCredentialStore, deps dependencies) (credentialRef, bool, error) {
 	if selection.backend == credentialBackendGopass && strings.Contains(opts.target, "/") {
 		targetPath, err := normalizeGopassEntryPath(opts.target)
@@ -277,6 +284,12 @@ func resolveCredential(opts commandOptions, selection selectedCredentialStore, d
 			Collection: opts.gopassPrefix,
 			Label:      path.Base(entry),
 			Target:     path.Base(opts.target),
+		}
+		if opts.ui == "shell" || opts.ui == "desktop" {
+			credential.Target, err = credentialTarget(credential, opts.target)
+			if err != nil {
+				return credentialRef{}, false, err
+			}
 		}
 		logSelectedEntry(credential.ID, opts.verbose, deps.stderr)
 		return credential, true, nil
@@ -294,12 +307,25 @@ func resolveCredential(opts commandOptions, selection selectedCredentialStore, d
 		return credentialRef{}, false, fmt.Errorf("could not retrieve credentials: %w", err)
 	}
 
-	credentials, err = matchCredentials(opts.target, credentials)
+	if opts.target == "" && (opts.ui == "shell" || opts.ui == "desktop") {
+		credentials = append([]credentialRef(nil), credentials...)
+		for i := range credentials {
+			credentials[i].Target, err = credentialTarget(credentials[i], "")
+			if err != nil {
+				return credentialRef{}, false, err
+			}
+		}
+	} else {
+		credentials, err = matchCredentials(opts.target, credentials)
+	}
 	if err != nil {
 		return credentialRef{}, false, err
 	}
 	credential, selected := selectCredential(credentials)
 	if len(credentials) == 0 {
+		if opts.target == "" {
+			return credentialRef{}, false, errors.New("no credentials found in the selected scope")
+		}
 		if selection.backend == credentialBackendSecretService {
 			location := "Secret Service"
 			if opts.secretCollection != "" {
@@ -316,6 +342,13 @@ func resolveCredential(opts commandOptions, selection selectedCredentialStore, d
 			location = fmt.Sprintf("gopass path %q", opts.gopassPrefix)
 		}
 		return credentialRef{}, false, fmt.Errorf("no gopass entry matching %q under %s", opts.target, location)
+	}
+	if (opts.ui == "shell" || opts.ui == "desktop") && (!selected || opts.target == "") {
+		index, err := chooseSSHCredential(opts, credentials, deps)
+		if err != nil {
+			return credentialRef{}, false, err
+		}
+		credential, selected = credentials[index], true
 	}
 	if !selected {
 		stdout := deps.stdout

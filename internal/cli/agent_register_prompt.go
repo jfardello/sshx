@@ -45,6 +45,12 @@ func readRegistrationPassphrase(ctx context.Context) ([]byte, error) {
 // The descriptor must be a dedicated, nonblocking terminal descriptor. Keeping
 // this seam local lets tests use a PTY without replacing process-global stdin.
 func readRegistrationPassphraseFD(ctx context.Context, fd int) (passphrase []byte, returnErr error) {
+	return readTerminalLineFD(ctx, fd, registrationPassphrasePrompt, maxRegistrationPassphraseBytes, false)
+}
+
+// readTerminalLineFD owns no descriptor or goroutine. Numeric mode echoes only
+// digits and terminal editing; passphrase mode retains the existing no-echo UI.
+func readTerminalLineFD(ctx context.Context, fd int, prompt string, limit int, numeric bool) (passphrase []byte, returnErr error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -111,12 +117,12 @@ func readRegistrationPassphraseFD(ctx context.Context, fd int) (passphrase []byt
 	if err := unix.IoctlSetTermios(fd, set, settings); err != nil {
 		return nil, errRegistrationPassphrase
 	}
-	if err := registrationTTYWrite(ctx, fd, []byte(registrationPassphrasePrompt)); err != nil {
+	if err := registrationTTYWrite(ctx, fd, []byte(prompt)); err != nil {
 		return nil, err
 	}
 
 	// Fixed capacity prevents append from leaving secret-bearing old allocations.
-	buffer := make([]byte, 0, maxRegistrationPassphraseBytes)
+	buffer := make([]byte, 0, limit)
 	defer func() { clear(buffer[:cap(buffer)]) }()
 	var chunk [maxRegistrationPassphraseBytes + 1]byte
 	defer clear(chunk[:])
@@ -138,24 +144,44 @@ func readRegistrationPassphraseFD(ctx context.Context, fd int) (passphrase []byt
 				return nil, context.Canceled
 			}
 			if registrationControlByte(b, settings.Cc[unix.VERASE]) || b == '\b' || b == 0x7f {
+				if numeric && len(buffer) > 0 {
+					if err := registrationTTYWrite(ctx, fd, []byte("\b \b")); err != nil {
+						return nil, err
+					}
+				}
 				buffer = registrationEraseRune(buffer)
 				continue
 			}
 			if registrationControlByte(b, settings.Cc[unix.VKILL]) {
+				if numeric {
+					for range buffer {
+						if err := registrationTTYWrite(ctx, fd, []byte("\b \b")); err != nil {
+							return nil, err
+						}
+					}
+				}
 				clear(buffer)
 				buffer = buffer[:0]
 				continue
 			}
 			if b == '\n' || b == '\r' || registrationControlByte(b, settings.Cc[unix.VEOF]) {
+				if numeric && (len(buffer) == 0 || registrationControlByte(b, settings.Cc[unix.VEOF])) {
+					return nil, context.Canceled
+				}
 				if len(buffer) == 0 {
 					return nil, errRegistrationPassphrase
 				}
 				return append([]byte(nil), buffer...), nil
 			}
-			if len(buffer) == maxRegistrationPassphraseBytes {
+			if len(buffer) == limit || (numeric && (b < '0' || b > '9')) {
 				return nil, errRegistrationPassphrase
 			}
 			buffer = append(buffer, b)
+			if numeric {
+				if err := registrationTTYWrite(ctx, fd, []byte{b}); err != nil {
+					return nil, err
+				}
+			}
 		}
 		clear(chunk[:])
 	}

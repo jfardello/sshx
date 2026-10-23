@@ -41,6 +41,7 @@ var settingKeys = []string{
 	"credential-backend", "secret-collection", "gopass-prefix", "verbose", "options",
 	"agent.verbose", "agent.cache-ttl", "agent.prompt-helper", "agent.allow-forwarding",
 	"agent.allow-key-mutations", "agent.socket", "agent.state-file",
+	"ssh.ui", "ssh.prompt-helper",
 }
 
 // NormalizeKey accepts only known settings, with underscores as hyphen aliases.
@@ -106,6 +107,12 @@ func settingsFor(values Overrides, effective bool) []Setting {
 	boolean("agent.allow-key-mutations", agent.AllowKeyMutations)
 	str("agent.socket", agent.Socket, "")
 	str("agent.state-file", agent.StateFile, "")
+	ssh := SSHOverrides{}
+	if values.SSH != nil {
+		ssh = *values.SSH
+	}
+	str("ssh.ui", ssh.UI, "none")
+	str("ssh.prompt-helper", ssh.PromptHelper, "")
 	return result
 }
 
@@ -165,12 +172,12 @@ func Unset(ctx context.Context, name, key string) (fileupdate.Publication, error
 }
 
 func editMapping(root *yaml.Node, key string, create bool) (*yaml.Node, string) {
-	leaf, agent := strings.CutPrefix(key, "agent.")
-	if !agent {
+	section, leaf, nested := strings.Cut(key, ".")
+	if !nested {
 		return root, key
 	}
 	for i := 0; i < len(root.Content); i += 2 {
-		if root.Content[i].Value == "agent" {
+		if root.Content[i].Value == section {
 			return root.Content[i+1], leaf
 		}
 	}
@@ -178,7 +185,7 @@ func editMapping(root *yaml.Node, key string, create bool) (*yaml.Node, string) 
 		return nil, leaf
 	}
 	mapping := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	root.Content = append(root.Content, stringNode("agent"), mapping)
+	root.Content = append(root.Content, stringNode(section), mapping)
 	return mapping, leaf
 }
 
@@ -239,7 +246,7 @@ func editSetting(ctx context.Context, name, key string, replacement *yaml.Node) 
 					comments = append(comments, mapping.LineComment)
 					mapping.LineComment = ""
 				}
-				if strings.HasPrefix(key, "agent.") {
+				if strings.Contains(key, ".") {
 					root := doc.Content[0]
 					for i := 0; i < len(root.Content); i += 2 {
 						if root.Content[i+1] == mapping && root.Content[i].LineComment != "" {

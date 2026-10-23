@@ -16,17 +16,14 @@ The optional Go Zenity helper provides signing approval and masked passphrase
 entry alongside the existing version-1 Tk helper; see
 [local confirmation](../agent/confirmation.md). Its separate
 [version-2 credential-selection protocol](../reference/credential-selection.md)
-and list dialog are implemented; SSH CLI integration remains planned.
+and list dialog are implemented. Password SSH and its shorthand also provide an
+opt-in numbered [terminal picker](../password-authentication.md#choose-a-stored-credential)
+with separate SSH UI/helper settings; desktop handoff remains planned.
 
-- Add opt-in terminal or desktop credential selection for password SSH and its
-  shorthand. Default behavior, SCP, and credential listing remain unchanged.
-- Select from scoped metadata before retrieving one secret; preserve terminal
-  ownership, redirected input, cancellation, and SSH exit status.
+- Connect desktop selection to exact-reference password SSH, preserving terminal
+  requirements, cancellation, redirected input and SSH exit status.
 - Keep helpers explicitly configured, requests bounded, and failures default-deny.
   Desktop selection uses a separate protocol and still needs a terminal for SSH.
-- Clarify “shell mode” before implementation: the draft proposes a numbered
-  terminal selector, not a persistent command interpreter. The helper can proceed
-  independently; desktop dependencies require real session testing.
 
 ## Native Windows support
 

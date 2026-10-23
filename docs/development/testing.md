@@ -19,6 +19,20 @@ When an OpenSSH client is installed, normal PTY tests also verify password
 authentication and binary archive upload/download against a disposable local
 SSH endpoint, including decompression and checksum validation.
 
+## SSH terminal selection
+
+Parser tests cover optional queries, SSH/root parity, config precedence and
+explicit resets, native option values, and remote-command/`--` boundaries. Existing
+SCP/listing tests retain their original behavior. Selection tests verify scoped
+metadata discovery, no-query prompting even for one candidate, direct connection
+for one queried match, cancellation and failure before secret retrieval.
+
+Real PTY fixtures test bounded numeric input, editing, cancel controls, invalid
+input, pasted-ahead flushing, context and external-signal cancellation, terminal
+restoration, and fresh input reaching the next reader. Subprocess fixtures bind
+a controlling terminal while redirecting stdin/stdout, then verify the picker
+leaves streams intact and restores the terminal before OpenSSH handoff.
+
 ## Desktop prompt helper
 
 Normal tests inject dialogs to cover strict version-1 parsing, plain-text identity
